@@ -1,0 +1,26 @@
+.login-container {
+    background-color: var(--ion-color-primary);
+    --background: var(--ion-color-primary);
+
+}
+
+.login-card-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+
+.login-card {
+    width: 30%;
+    min-width: 350px;
+}
+
+.login-logo-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    img {
+        width: 25%;
+    }
+}

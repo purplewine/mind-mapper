@@ -1,0 +1,12 @@
+
+.no-project-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    height: calc(100svh - 64px);
+}
+
+.no-project-container img {
+    width: 16rem;
+}

@@ -1,0 +1,11 @@
+.canvas-container {
+    vertical-align: baseline;
+    height: 100svh !important;
+    width: 100svw !important;
+    position: absolute !important;
+    /* background: transparent; */
+background-color: #e5e5f7;
+/* opacity: 0.1; */
+/* background-image:  linear-gradient(#dcd9e2 0.4px, transparent 0.4px), linear-gradient(to right, #dcd9e2 0.4px, #e5e5f7 0.4px);
+background-size: 8px 8px; */
+}
