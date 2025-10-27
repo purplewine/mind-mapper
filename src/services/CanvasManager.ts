@@ -31,6 +31,17 @@ export interface MindNode {
   notes: string;
   media: MediaFile[];
   isCollapsed: boolean;
+  aiSummary?: string;
+}
+
+export interface AIMindNodeStructure {
+  header: string,
+  description: string,
+  sources: [{
+    name: string,
+    link: string
+  }],
+  children: AIMindNodeStructure[]
 }
 
 export interface Connection {
@@ -61,6 +72,7 @@ export default class CanvasManager {
   isDragging = false;
   lastPosX = 0;
   lastPosY = 0;
+  zoomLevel = 1;
 
   nodeSizes = {
     small: { width: 120, height: 50, fontSize: 14 },
@@ -69,7 +81,7 @@ export default class CanvasManager {
     xlarge: { width: 220, height: 85, fontSize: 20 },
   } as const;
 
-  constructor(canvasEl: HTMLCanvasElement, onOpenNode: (node: MindNode) => void, onAIControlClick?: (event: any, node: MindNode) => void) {
+  constructor(canvasEl: HTMLCanvasElement, nodeJson: any, onOpenNode: (node: MindNode) => void, onAIControlClick?: (event: any, node: MindNode) => void) {
     const wrapper = canvasEl.parentElement || document.body;
     this.canvas = new fabric.Canvas(canvasEl, {
       width: wrapper.clientWidth,
@@ -95,6 +107,9 @@ export default class CanvasManager {
       }
     });
 
+    if(nodeJson) {
+      this.recreateCanvasFromJson(nodeJson)
+    }
   }
 
   resizeCanvas(): void {
@@ -257,6 +272,7 @@ export default class CanvasManager {
       title: text,
       notes: "",
       media: [],
+      aiSummary: "",
       isCollapsed: false,
     };
 
@@ -284,11 +300,7 @@ export default class CanvasManager {
   }
 
 
-
-  addChildNode(parentId: number): void {
-    const parent = this.nodes.find(n => n.id === parentId);
-    if (!parent) return;
-
+  _getProcessedChildNodeProperties(parent: MindNode): { childX: number, childY: number, nodeColor: string, textColor: string, sizeType: MindNode["size"] } {
     const parentCenter = parent.group.getCenterPoint();
     const nodeColor = DEFAULT_NODE_COLOR;
     const textColor = DEFAULT_TEXT_COLOR;
@@ -305,14 +317,24 @@ export default class CanvasManager {
     let childY = parentCenter.y + distance * Math.sin(angle);
 
     const size = this.nodeSizes[sizeType];
-    if (!this.canvas.width || !this.canvas.height) return;
+    if (!this.canvas.width || !this.canvas.height) return { childX, childY, nodeColor, textColor, sizeType };
     childX = Math.max(size.width / 2 + 50, Math.min(this.canvas.width - size.width / 2 - 50, childX));
     childY = Math.max(size.height / 2 + 50, Math.min(this.canvas.height - size.height / 2 - 50, childY));
 
-    const newNodeId = this.createNode(childX, childY, 'Child Node Child Node Child Node Child Node Child Node Child Node Child Node', nodeColor, textColor, parentId, sizeType);
+    return {
+      childX, childY,  nodeColor, textColor, sizeType
+    }
+  }
+
+  addChildNode(parentId: number): void {
+    const parent = this.nodes.find(n => n.id === parentId);
+    if (!parent) return;
+    const { childX, childY, nodeColor, textColor, sizeType } = this._getProcessedChildNodeProperties(parent);
+    const newNodeId = this.createNode(childX, childY, 'Untitled Node', nodeColor, textColor, parentId, sizeType);
 
     // checkAndResolveOverlaps(newNodeId);
-    this.autoArrange()
+    this.autoArrange();
+    this.openNodeModalForNodeId(newNodeId)
   }
 
   createConnection(fromId: number, toId: number): void {
@@ -680,8 +702,10 @@ export default class CanvasManager {
       // Update other properties as needed
       node.notes = updated.notes || node.notes;
       node.media = updated.media || node.media;
+      node.aiSummary = updated.aiSummary || node.aiSummary;
       node.group.setCoords();
       this.updateNodeConnections(node.id);
+      // this.autoArrange()
       this.canvas.renderAll();
 
     }
@@ -701,6 +725,7 @@ export default class CanvasManager {
         title: node.title,
         notes: node.notes,
         media: node.media,
+        aiSummary: node.aiSummary,
         size: node.size,
         parentId: node.parentId,
         children: node.children,
@@ -719,6 +744,56 @@ export default class CanvasManager {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  getCalculatedJSON() {
+    const data = {
+      nodes: this.nodes.map((node) => ({
+        id: node.id,
+        x: node.x,
+        y: node.y,
+        title: node.title,
+        notes: node.notes,
+        media: node.media,
+        aiSummary: node.aiSummary,
+        size: node.size,
+        parentId: node.parentId,
+        children: node.children,
+        backgroundColor: node.group.item(0).fill,
+        textColor: node.group.item(1)?.fill || "#fff",
+      })),
+      connections: this.connections.map((c) => ({ from: c.from, to: c.to })),
+      nodeIdCounter: this.nodeIdCounter
+    };
+    const jsonString = JSON.stringify(data, null, 2);
+    return jsonString;
+  }
+
+  recreateCanvasFromJson(jsonString:string) {
+     const data = JSON.parse(jsonString);
+      this.canvas.clear();
+      this.canvas.backgroundColor = DEFAULT_CANVAS_BG_COLOR,
+        this.nodes = [];
+        this.connections = [];
+        this.nodeIdCounter = 0;
+        if (data.nodes)
+          data.nodes.forEach((n: any) =>
+            this.createNode(n.x, n.y, n.title || "Node", n.backgroundColor || DEFAULT_CANVAS_BG_COLOR, n.textColor || "#fff", n.parentId, n.size || "medium", n.id)
+          );
+        if (data.connections) data.connections.forEach((c: any) => this.createConnection(c.from, c.to));
+        if(data.nodeIdCounter) this.nodeIdCounter = data.nodeIdCounter
+        data.nodes.forEach((n: any) => {
+          let node = this.nodes.find(x => n.id === x.id)
+          if (node) {
+            node.notes = n.notes;
+            node.media = n.media;
+            node.aiSummary = n.aiSummary;
+          }
+        })
+
+
+        
+
   }
 
   importFromFile(e: Event & { target: HTMLInputElement }): void {
@@ -878,6 +953,135 @@ export default class CanvasManager {
 
   }
 
+ createChildNodeStructure(parentId: number, nodeDetails: AIMindNodeStructure): void {
+  const parent = this.nodes.find(n => n.id === parentId);
+  if (!parent) return;
+  
+  // Update parent's notes
+  parent.notes = parent.notes 
+    ? `${parent.notes}\n\n${nodeDetails.description}` 
+    : nodeDetails.description;
+
+  // Add sources to parent
+  if (nodeDetails.sources && nodeDetails.sources.length > 0) {
+    const sourcesText = nodeDetails.sources
+      .map(source => `${source.name}: ${source.link}`)
+      .join('\n');
+    parent.notes = `${parent.notes}\n\nSources:\n${sourcesText}`;
+  }
+
+
+  try {
+    // Create all child nodes
+    this._createNodesRecursively(parentId, nodeDetails.children);
+  } finally {
+
+    this.autoArrange();
+  }
+  
+}
+
+private _createNodesRecursively(parentId: number, children: AIMindNodeStructure[]): void {
+  if (!children || children.length === 0) return;
+
+  children.forEach(child => {
+    const parent = this.nodes.find(n => n.id === parentId);
+    if (!parent) return;
+
+    const { childX, childY, nodeColor, textColor, sizeType } = 
+      this._getProcessedChildNodeProperties(parent);
+    
+    const newNodeId = this.createNode(
+      childX, 
+      childY, 
+      child.header, 
+      nodeColor, 
+      textColor, 
+      parentId, 
+      sizeType
+    );
+
+    const newNode = this.nodes.find(n => n.id === newNodeId);
+    if (newNode) {
+      newNode.notes = child.description || '';
+      
+      if (child.sources && child.sources.length > 0) {
+        const sourcesText = child.sources
+          .map(source => `${source.name}: ${source.link}`)
+          .join('\n');
+        newNode.notes += `\n\nSources:\n${sourcesText}`;
+      }
+    }
+
+    if (child.children && child.children.length > 0) {
+      this._createNodesRecursively(newNodeId, child.children);
+    }
+  });
+}
+
+zoomIn() {
+  this.zoomLevel += 0.1;
+  const activeObject = this.canvas.getActiveObject();
+  let point;
+  if (activeObject) {
+    point = activeObject.getCenterPoint();
+  }
+  else {
+    const node = this.nodes.find(n => n.parentId === null);
+    if (node) {
+      point = node.group.getCenterPoint();
+    }
+  }
+  this.canvas.zoomToPoint(new fabric.Point(point.x, point.y), this.zoomLevel);
+
+  this.canvas.requestRenderAll();
+}
+zoomOut() {
+ this.zoomLevel -= 0.1;
+  const activeObject = this.canvas.getActiveObject();
+  let point;
+  if (activeObject) {
+    point = activeObject
+  }
+  else {
+    const node = this.nodes.find(n => n.parentId === null);
+    if (node) {
+      point = node.group
+    }
+  }
+  this.canvas.zoomToPoint(point.getCenterPoint(), this.zoomLevel);
+
+  this.canvas.requestRenderAll();
+}
+
+
+zoomToObject(nodeId: number, zoomLevel = 2) {
+
+  const node = this.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+
+  const obj = node.group;
+
+  // Get the center of the object
+  const center = obj.getCenterPoint();
+
+  // Set the zoom level (e.g., 2 = 200%)
+  this.canvas.setZoom(zoomLevel);
+
+  // Calculate the viewport transform to center the object
+  const vpw = this.canvas.getWidth();
+  const vph = this.canvas.getHeight();
+
+  // Compute panning to center the object after zoom
+  const x = vpw / 2 - center.x * zoomLevel;
+  const y = vph / 2 - center.y * zoomLevel;
+
+  // Apply the transformation
+  this.canvas.viewportTransform = [zoomLevel, 0, 0, zoomLevel, x, y];
+  this.canvas.requestRenderAll();
+}
+  
+
 
   _getProcessedText(text: string) {
 
@@ -920,8 +1124,9 @@ export default class CanvasManager {
 
   dispose(): void {
     this.canvas.dispose();
+
     // optional: remove listeners we added on window (if needed)
-    // window.removeEventListener('resize', this.resizeCanvas) // careful: bound reference required
+    window.removeEventListener('resize', this.resizeCanvas) // careful: bound reference required
     // null out canvas reference
     // @ts-ignore
     this.canvas = null as any;

@@ -1,5 +1,7 @@
 // src/NodeModal.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import type { JSX } from '@ionic/core/components';
+
 import {
     IonModal,
     IonHeader,
@@ -40,9 +42,11 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
     const [nodeColor, setNodeColor] = useState<string>("red");
     const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
 
+    const titleTextRef = useRef<HTMLIonTextareaElement>(null);
+
     useEffect(() => {
         if (nodeData) {
-            setTitle(nodeData.title || "");
+            setTitle(nodeData.title === "Untitled Node" ? "" : nodeData.title || "");
             setNotes(nodeData.notes || "");
             setMediaFiles(nodeData.media || []);
             setNodeColor(nodeData.color || "red");
@@ -53,6 +57,19 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
             setNodeColor("red");
         }
     }, [nodeData]);
+
+    useEffect(() => {
+        const setFocus = async () => {
+            // Access the method directly on the ref's current value
+            if (titleTextRef.current) {
+                const element = await titleTextRef.current.getInputElement();
+                element.focus();
+            }
+        };
+
+        // Use a timeout to ensure the component is fully rendered
+        setTimeout(setFocus, 150);
+    }, []); // Run only once on mount
 
     function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
         const files = Array.from(e.target.files || []);
@@ -78,7 +95,7 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
 
             <IonHeader>
                 <IonToolbar color={'light'}>
-                    <IonTitle>Edit Node</IonTitle>
+                    <IonTitle>{ title === "" ? "Untitled Node" : title.length > 20 ? `${title.slice(20, title.length)}...`: title }</IonTitle>
                     <IonButtons slot="end">
                         <IonButton onClick={onClose}>
                             <IonIcon slot="icon-only" icon={closeIcon} />
@@ -110,8 +127,10 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
                             <IonCol>
                                 <IonLabel position="stacked">Node Title</IonLabel>
                                 <IonTextarea
+                                    autoFocus
+                                    ref={titleTextRef}
                                     rows={10}
-                                    fill="solid" 
+                                    fill="solid"
                                     value={title}
                                     placeholder="Enter node title"
                                     autoGrow={true}
@@ -130,7 +149,7 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
                                 <IonLabel position="stacked">Notes</IonLabel>
                                 <IonTextarea
                                     rows={10}
-                                    fill="solid" 
+                                    fill="solid"
                                     value={notes}
                                     placeholder="Add notes..."
                                     autoGrow={true}
@@ -185,14 +204,14 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
                             </IonRow>
 
                             <IonRow>
-                               <IonCol>
+                                <IonCol>
                                     <IonLabel position="stacked">Node Color</IonLabel>
                                     <IonSelect value={nodeColor} onIonChange={(e) => setNodeColor(e.detail.value)}>
                                         <IonSelectOption value="red">Red</IonSelectOption>
                                         <IonSelectOption value="green">Green</IonSelectOption>
                                         <IonSelectOption value="blue">Blue</IonSelectOption>
                                     </IonSelect>
-                               </IonCol>
+                                </IonCol>
                             </IonRow>
                         </IonGrid>
                     </>
@@ -202,8 +221,8 @@ export default function NodeModal({ onClose, nodeData, onSave }: NodeModalProps)
             <IonFooter>
                 <IonToolbar>
                     <IonButtons slot="end" style={{ paddingRight: 12 }}>
-                        <IonButton onClick={onClose}>Cancel</IonButton>
-                        <IonButton color={'secondary'} onClick={handleSave}>
+                        <IonButton mode="ios" onClick={onClose}>Cancel</IonButton>
+                        <IonButton mode="ios" color={'secondary'} onClick={handleSave}>
                             Save
                         </IonButton>
                     </IonButtons>

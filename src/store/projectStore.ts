@@ -20,22 +20,27 @@ export interface IProject {
   userId: string;
   name: string;
   description?: string;
+  aiSummary?: {nodeId: number, summary: string}[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
-  // Add any other fields you need
+  jsonString: string;
 }
 
 interface ProjectState {
   projects: IProject[];
   isLoading: boolean;
   error: string | null;
+
+  autoSaveTimeouts: Map<string, NodeJS.Timeout>,
+  lastSavedData: Map<string, string>;
   unsubscribe: (() => void) | null;
   
   // Actions
   subscribeToProjects: (userId: string) => void;
   unsubscribeFromProjects: () => void;
   addProject: (userId: string, projectData: Omit<IProject, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<string>;
-  updateProject: (projectId: string, projectData: Partial<Omit<IProject, 'id' | 'userId' | 'createdAt'>>) => Promise<void>;
+  updateProject: (projectId: string, projectData: any)=> Promise<void>;
+  updateProjectWithDebounce: (projectId: string, projectData: Partial<Omit<IProject, 'id' | 'userId' | 'createdAt'>>, delay?: number) => void;
   deleteProject: (projectId: string) => Promise<void>;
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -46,6 +51,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   isLoading: false,
   error: null,
   unsubscribe: null,
+   autoSaveTimeouts: new Map(),
+  lastSavedData: new Map(),
+
 
   subscribeToProjects: (userId: string) => {
     // Unsubscribe from previous listener if exists
@@ -127,6 +135,47 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       throw error;
     }
   },
+
+  updateProjectWithDebounce: (projectId: string, projectData: any, delay = 1000) => {
+    console.log('autosaving...');
+    
+    const { autoSaveTimeouts, lastSavedData, updateProject } = get();
+
+    // Check if data has actually changed
+    const newDataString = JSON.stringify(projectData);
+    const lastSaved = lastSavedData.get(projectId);
+    
+    if (lastSaved === newDataString) {
+      // No changes, skip update
+      return;
+    }
+
+    // Clear existing timeout for this project
+    const existingTimeout = autoSaveTimeouts.get(projectId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    // Set new timeout
+    const timeoutId = setTimeout(async () => {
+      try {
+        await updateProject(projectId, projectData);
+        // Update last saved data after successful save
+        lastSavedData.set(projectId, newDataString);
+        autoSaveTimeouts.delete(projectId);
+        set({ 
+          autoSaveTimeouts: new Map(autoSaveTimeouts),
+          lastSavedData: new Map(lastSavedData)
+        });
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      }
+    }, delay);
+
+    autoSaveTimeouts.set(projectId, timeoutId);
+    set({ autoSaveTimeouts: new Map(autoSaveTimeouts) });
+  },
+  
 
   deleteProject: async (projectId: string) => {
     set({ error: null });

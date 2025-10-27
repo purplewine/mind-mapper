@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { useUserStore } from '../../store/userStore';
 import { useProjectStore } from '../../store/projectStore';
-import { IonItem, IonLabel, IonList } from '@ionic/react';
+import { IonItem, IonLabel, IonList, useIonLoading, useIonModal } from '@ionic/react';
 import { NoProject } from '../NoProject/NoProject';
+import NewProjectModal from '../NewProject/NewProject';
 
 
 const ProjectList: React.FC = () => {
@@ -18,6 +19,8 @@ const ProjectList: React.FC = () => {
         deleteProject
     } = useProjectStore();
 
+    const [presentLoading, dismissLoading] = useIonLoading();
+    
     useEffect(() => {
         if (user) {
             subscribeToProjects(user.uid);
@@ -28,18 +31,26 @@ const ProjectList: React.FC = () => {
         };
     }, [user, subscribeToProjects, unsubscribeFromProjects]);
 
-    const handleAddProject = async () => {
-        if (!user) return;
+     const [presentNewProjectModal, dismissNewProjectModal] = useIonModal(NewProjectModal, {
+        onClose : () => { dismissNewProjectModal() }
+    });
 
-        try {
-            await addProject(user.uid, {
-                name: 'New Project',
-                description: 'Project description',
-            });
-        } catch (error) {
-            console.error('Failed to add project:', error);
-        }
-    };
+    function openNewProjectModal() {
+        presentNewProjectModal()
+    }
+
+    // const handleAddProject = async () => {
+    //     if (!user) return;
+
+    //     try {
+    //         await addProject(user.uid, {
+    //             name: 'New Project',
+    //             description: 'Project description',
+    //         });
+    //     } catch (error) {
+    //         console.error('Failed to add project:', error);
+    //     }
+    // };
 
     const handleUpdateProject = async (projectId: string) => {
         try {
@@ -59,6 +70,14 @@ const ProjectList: React.FC = () => {
         }
     };
 
+    useEffect(() => {
+        if(isLoading) {
+            presentLoading({message : "Loading State...", mode:"ios"})
+        } else {
+            dismissLoading()
+        }
+    }, [isLoading])
+
     if (isLoading) return <div>Loading projects...</div>;
     if (error) return <div>Error: {error}</div>;
 
@@ -76,15 +95,18 @@ const ProjectList: React.FC = () => {
                 projects.length > 0 && (
                     <>
                         <IonList >
+                            <IonItem button onClick={openNewProjectModal}>
+                                <IonLabel>Create New Project</IonLabel>
+                            </IonItem>
                             {projects.map((project) => (
-                                <>
-                                    <IonItem button detail={true} routerLink={`/project/${project.id}`}>
+
+                                    <IonItem key={project.id} button detail={true} routerLink={`/project/${project.id}`}>
                                         <IonLabel>
                                             <h2> {project.name}</h2>
                                             <p>{project.description}</p>
                                         </IonLabel>
                                     </IonItem>
-                                </>
+
                             ))}
                         </IonList>
 

@@ -67,6 +67,11 @@ http://ionicframework.com/docs/theming/ */
 
 }
 
+body::selection {
+  background-color: #ffcc00; /* Example: yellow background */
+  color: #333333; /* Example: dark grey text */
+}
+
 .text-center {
 	text-align: center;
 }

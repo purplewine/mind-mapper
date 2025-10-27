@@ -9,3 +9,27 @@ background-color: #e5e5f7;
 /* background-image:  linear-gradient(#dcd9e2 0.4px, transparent 0.4px), linear-gradient(to right, #dcd9e2 0.4px, #e5e5f7 0.4px);
 background-size: 8px 8px; */
 }
+
+.side-menu-content {
+    --width : 30svw;
+}
+
+ion-menu::part(backdrop) {
+  display: none !important;
+}
+
+.search-container {
+  width: 300px;
+}
+.zoom-container {
+width: 150px;
+    position: absolute;
+    bottom: -10px;
+}
+.zoom-container-card {
+  display: flex;
+    align-items: center;
+    flex-direction: column-reverse;
+    justify-content: space-between;
+    width: fit-content;
+}

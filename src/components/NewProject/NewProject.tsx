@@ -43,7 +43,8 @@ const NewProjectModal: FunctionComponent<NewProjectModalProps> = ({ onClose }) =
             });
             presentToast({
                 message: "Project Created Successfully!",
-                color: 'success'
+                color: 'success',
+                duration: 500
             })
             onClose();
         } catch (error) {

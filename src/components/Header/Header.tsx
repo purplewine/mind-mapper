@@ -10,15 +10,18 @@ export const Header = () => {
         onDismiss: (data: any, role: string) => dismissProfileMenu(data, role),
       });
     
+      function gotoHomePage() {
+        window.location.replace('/')
+      }
     
     return (
         <IonHeader>
         <IonToolbar color={'primary'}>
-          <IonAvatar slot="start">
+          <IonAvatar  className="cursor-pointer" onClick={() => gotoHomePage()} slot="start">
             <img style={{ padding: 10 }} alt="Mindmapper logo" src="/mindmap-logo.png" />
           </IonAvatar>
 
-          <IonTitle>Mindmapper</IonTitle>
+          <IonTitle  className="cursor-pointer" onClick={() => gotoHomePage()}>Mindmapper</IonTitle>
           <IonButtons className='' slot="end">
             {
               user && user.photoURL && (
