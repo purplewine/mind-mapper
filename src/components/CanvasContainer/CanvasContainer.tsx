@@ -4,7 +4,7 @@ import Dock from './../Dock/Dock';
 import { IonBreadcrumb, IonBreadcrumbs, IonButton, IonButtons, IonCard, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonMenu, IonPopover, IonTitle, IonToolbar, useIonAlert, useIonLoading, useIonModal, useIonPopover, useIonToast } from '@ionic/react';
 import './Canvas.css';
 import { addOutline, archiveOutline, documentTextOutline, downloadOutline, gitMergeOutline, handRightOutline, removeOutline, searchOutline, settingsOutline, shuffleOutline } from 'ionicons/icons';
-import CanvasManager, { MindNode } from '../../services/CanvasManager';
+import CanvasManager from '../../services/CanvasManager';
 import NodeModal from './NodeModal';
 import { Popover } from './Popover';
 import { IProject } from '../../store/projectStore';
@@ -12,6 +12,7 @@ import { menuController } from '@ionic/core/components';
 import { NodeBreadcrumbs } from '../NodeBreadcrumbs/NodeBreadcrumbs';
 import SummarizeNodeContainer from '../SummarizeNodeContainer/SummarizeNodeContainer';
 import { createChildrenMindMap } from '../../services/api';
+import { MindNode } from '../../services/contants';
 
 interface IMindMapper {
     project: IProject,

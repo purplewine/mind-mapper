@@ -22,13 +22,13 @@ const NewProjectModal: FunctionComponent<NewProjectModalProps> = ({ onClose }) =
     } = useProjectStore();
 
     const [presentToast] = useIonToast();
-    const [projectName, setProjectName] = useState('Untitled Project');
+    const [projectName, setProjectName] = useState('');
     const [projectDescription, setProjectDescription] = useState("");
 
 
     const handleOnSave = async () => {
         if (projectName === "") { 
-            presentToast("Project Name is required!", 2000)
+            setProjectName("Untitled Project")
             return;
         }
         if (projectDescription === "") {

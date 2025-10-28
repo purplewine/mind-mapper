@@ -1,5 +1,5 @@
 import { fabric } from "fabric";
-import { TreeLayoutEngine, DEFAULT_LAYOUT_CONFIG, LayoutConfig, Connection } from './LayoutEngine';
+import { TreeLayoutEngine, DEFAULT_LAYOUT_CONFIG, LayoutConfig } from './LayoutEngine';
 import {
   _getCalculatedJSON,
   _getProcessedChildNodeProperties,
@@ -7,15 +7,93 @@ import {
   _getRandomBrightColor,
   createBezierPath
 } from "../services/helper";
-import { AIMindNodeStructure, DEFAULT_CANVAS_BG_COLOR, DEFAULT_NODE_COLOR, DEFAULT_TEXT_COLOR, FABRIC_DEFAULTS, FabricTransform, MindNode, NodeDetails, NodeFabricObject, NodeSize, NodeSizeConfig, NodeSizes, ZOOM_STEP, ZOOM_WHEEL_SENSITIVITY } from "./contants";
+
+// ============================================
+// Constants
+// ============================================
+
+const DEFAULT_NODE_COLOR = "#ffffff";
+const DEFAULT_TEXT_COLOR = "#000000";
+const DEFAULT_CANVAS_BG_COLOR = "#d8dade";
+
+const FABRIC_DEFAULTS = {
+  cornerColor: "#ffffff",
+  cornerStrokeColor: "#2dd55b",
+  borderColor: "#2dd55b",
+  cornerSize: 8,
+  transparentCorners: false,
+  cornerStyle: 'circle'
+} as const;
+
+const ZOOM_STEP = 0.1;
+const ZOOM_WHEEL_SENSITIVITY = 0.989;
+
+// ============================================
+// Types
+// ============================================
+
+type FabricTransform = fabric.Transform;
+type NodeFabricObject = fabric.Object & { nodeId?: number };
+
+export interface MediaFile {
+  name: string;
+  url: string;
+  type: string;
+}
+
+export interface MindNode {
+  id: number;
+  group: fabric.Group;
+  x: number;
+  y: number;
+  parentId: number | null;
+  children: number[];
+  size: NodeSize;
+  width: number;
+  height: number;
+  title: string;
+  notes: string;
+  media: MediaFile[];
+  isCollapsed: boolean;
+  aiSummary?: string;
+  color: string;
+}
+
+export interface AIMindNodeStructure {
+  header: string;
+  description: string;
+  sources: Array<{ name: string; link: string }>;
+  children: AIMindNodeStructure[];
+}
+
+export interface Connection {
+  from: number;
+  to: number;
+  path?: fabric.Path;
+}
+
+export type NodeSize = "small" | "medium" | "large" | "xlarge";
+
+interface NodeSizeConfig {
+  width: number;
+  height: number;
+  fontSize: number;
+}
+
+type NodeSizes = Record<NodeSize, NodeSizeConfig>;
+
+interface NodeDetails {
+  text: string;
+  description: string;
+}
 
 // ============================================
 // Canvas Manager
 // ============================================
 
 export default class CanvasManager {
-  private canvas: fabric.Canvas;
-  private nodes: MindNode[] = [];
+  public canvas: fabric.Canvas;
+  public nodes: MindNode[] = [];
   private connections: Connection[] = [];
   private nodeIdCounter = 0;
   private layoutEngine: TreeLayoutEngine;
@@ -406,22 +484,22 @@ export default class CanvasManager {
     const parent = this.findNode(parentId);
     if (!parent) return;
 
-    const childProps = _getProcessedChildNodeProperties(
-      parent,
-      this.nodeSizes,
-      this.canvas
-    );
+    // Use parent's position as temporary position
+    // autoArrange will position it correctly
+    const tempX = parent.x + 200;
+    const tempY = parent.y;
 
     const newNodeId = this.createNode(
-      childProps.childX,
-      childProps.childY,
+      tempX,
+      tempY,
       'Untitled Node',
-      childProps.nodeColor,
-      childProps.textColor,
+      DEFAULT_NODE_COLOR,
+      DEFAULT_TEXT_COLOR,
       parentId,
-      childProps.sizeType
+      "medium"
     );
 
+    // Auto-arrange will calculate proper positions
     this.autoArrange();
     this.openNodeModalForNodeId(newNodeId);
   }
@@ -573,6 +651,9 @@ export default class CanvasManager {
   // ============================================
 
   autoArrange(): void {
+    // Reinitialize layout engine with current nodes and connections
+    // This ensures it has the latest state
+    this.layoutEngine = this.createLayoutEngine();
     this.hideCollapsedChildren();
     this.layoutEngine.arrange();
   }
@@ -630,20 +711,19 @@ export default class CanvasManager {
   }
 
   private createChildWithAIData(parent: MindNode, child: AIMindNodeStructure): number {
-    const childProps = _getProcessedChildNodeProperties(
-      parent,
-      this.nodeSizes,
-      this.canvas
-    );
+    // Use parent's position as temporary position
+    // autoArrange will position it correctly
+    const tempX = parent.x + 200;
+    const tempY = parent.y;
 
     const newNodeId = this.createNode(
-      childProps.childX,
-      childProps.childY,
+      tempX,
+      tempY,
       child.header,
-      childProps.nodeColor,
-      childProps.textColor,
+      DEFAULT_NODE_COLOR,
+      DEFAULT_TEXT_COLOR,
       parent.id,
-      childProps.sizeType
+      "medium"
     );
 
     const newNode = this.findNode(newNodeId);

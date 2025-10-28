@@ -3,14 +3,19 @@ import { signOut } from "firebase/auth";
 import { auth } from "../../firebase";
 import { useUserStore } from "../../store/userStore";
 
+interface IProfileMenu {
+    onDismiss: () => void
+} 
 
-export const ProfileMenu = () => {
+export const ProfileMenu: React.FC<IProfileMenu> = ({ onDismiss }) => {
     const { user, isLoading, setUser, setLoading, setError, logout } = useUserStore();
 
     const handleSignOut = async () => {
         try {
             await signOut(auth);
             logout();
+            onDismiss();
+            
         } catch (error: any) {
             console.error('Logout error:', error);
 
