@@ -1,196 +1,271 @@
 import { fabric } from "fabric";
-import { addChildControl, addMoreOptionControl } from "./Controls";
-type FabricTransform = fabric.Transform;
-type NodeFabricObject = fabric.Object & { nodeId?: string };
+import { TreeLayoutEngine, DEFAULT_LAYOUT_CONFIG, LayoutConfig, Connection } from './LayoutEngine';
+import {
+  _getCalculatedJSON,
+  _getProcessedChildNodeProperties,
+  _getProcessedText,
+  _getRandomBrightColor,
+  createBezierPath
+} from "../services/helper";
+import { AIMindNodeStructure, DEFAULT_CANVAS_BG_COLOR, DEFAULT_NODE_COLOR, DEFAULT_TEXT_COLOR, FABRIC_DEFAULTS, FabricTransform, MindNode, NodeDetails, NodeFabricObject, NodeSize, NodeSizeConfig, NodeSizes, ZOOM_STEP, ZOOM_WHEEL_SENSITIVITY } from "./contants";
 
-const DEFAULT_NODE_COLOR = "#ffffff";
-const DEFAULT_TEXT_COLOR = "#000000";
-const DEFAULT_CONNECTOR_COLOR = "#0054e9";
-const DEFAULT_CANVAS_BG_COLOR = "#d8dade";
-
-/**
- * Lightweight types used by the manager
- */
-export interface MediaFile {
-  name: string;
-  url: string;
-  type: string;
-}
-
-export interface MindNode {
-  id: number;
-  group: any; // fabric.Group (typed as any to be permissive; replace with fabric.Group if you have type defs)
-  x: number;
-  y: number;
-  parentId: number | null;
-  children: number[];
-  size: "small" | "medium" | "large" | "xlarge";
-  width: number;
-  height: number;
-  title: string;
-  notes: string;
-  media: MediaFile[];
-  isCollapsed: boolean;
-  aiSummary?: string;
-}
-
-export interface AIMindNodeStructure {
-  header: string,
-  description: string,
-  sources: [{
-    name: string,
-    link: string
-  }],
-  children: AIMindNodeStructure[]
-}
-
-export interface Connection {
-  from: number;
-  to: number;
-  path: any; // fabric.Path
-}
-
-fabric.Object.prototype.cornerColor = "#ffffff";
-fabric.Object.prototype.cornerStrokeColor = "#2dd55b";
-fabric.Object.prototype.borderColor = "#2dd55b";
-fabric.Object.prototype.cornerSize = 8;
-fabric.Object.prototype.transparentCorners = false;
-fabric.Object.prototype.cornerStyle = 'circle';
-
-
-
-
+// ============================================
+// Canvas Manager
+// ============================================
 
 export default class CanvasManager {
-  canvas: fabric.Canvas;
-  nodes: MindNode[] = [];
-  connections: Connection[] = [];
-  nodeIdCounter = 0;
-  onOpenNode: (node: MindNode) => void;
-  onAIControlClick?: (event: any, node: MindNode) => void;
-  isPanMode = false;
-  isDragging = false;
-  lastPosX = 0;
-  lastPosY = 0;
-  zoomLevel = 1;
+  private canvas: fabric.Canvas;
+  private nodes: MindNode[] = [];
+  private connections: Connection[] = [];
+  private nodeIdCounter = 0;
+  private layoutEngine: TreeLayoutEngine;
+  
+  // Interaction state
+  private isPanMode = false;
+  private isDragging = false;
+  private lastPosX = 0;
+  private lastPosY = 0;
+  private zoomLevel = 1;
 
-  nodeSizes = {
+  // Callbacks
+  private onOpenNode: (node: MindNode) => void;
+  private onAIControlClick?: (event: MouseEvent, node: MindNode) => void;
+
+  private readonly nodeSizes: NodeSizes = {
     small: { width: 120, height: 50, fontSize: 14 },
     medium: { width: 150, height: 60, fontSize: 16 },
     large: { width: 180, height: 70, fontSize: 18 },
     xlarge: { width: 220, height: 85, fontSize: 20 },
-  } as const;
+  };
 
-  constructor(canvasEl: HTMLCanvasElement, nodeJson: any, onOpenNode: (node: MindNode) => void, onAIControlClick?: (event: any, node: MindNode) => void) {
-    const wrapper = canvasEl.parentElement || document.body;
-    this.canvas = new fabric.Canvas(canvasEl, {
-      width: wrapper.clientWidth,
-      height: wrapper.clientHeight, backgroundColor: DEFAULT_CANVAS_BG_COLOR,
-    });
+  constructor(
+    canvasEl: HTMLCanvasElement,
+    nodeJson: string | null,
+    onOpenNode: (node: MindNode) => void,
+    onAIControlClick?: (event: MouseEvent, node: MindNode) => void
+  ) {
     this.onOpenNode = onOpenNode;
     this.onAIControlClick = onAIControlClick;
 
+    this.canvas = this.initializeCanvas(canvasEl);
+    this.applyFabricDefaults();
     this.setupEvents();
-    window.addEventListener("resize", () => this.resizeCanvas());
-    this.resizeCanvas();
-    fabric.util.addListener((this.canvas as any).upperCanvasEl, 'dblclick', (e: any) => {
-      // Your double-click logic for the canvas
-      const target = (this.canvas as any).findTarget(e);
-      if (target) {
-        console.log('Double-clicked on object of type:', target);
-        if (typeof target.nodeId !== "undefined") {
-          const nodeId = target.nodeId as number;
-          this.openNodeModalForNodeId(nodeId);
-        }
-      } else {
-        console.log('Double-clicked on empty canvas area.');
-      }
-    });
+    this.setupWindowListeners();
 
-    if(nodeJson) {
-      this.recreateCanvasFromJson(nodeJson)
+    if (nodeJson) {
+      this.recreateCanvasFromJson(nodeJson);
     }
+
+    this.layoutEngine = this.createLayoutEngine();
   }
 
-  resizeCanvas(): void {
-    const wrapper = (this.canvas.getElement() as HTMLCanvasElement).parentElement;
+  // ============================================
+  // Initialization
+  // ============================================
+
+  private initializeCanvas(canvasEl: HTMLCanvasElement): fabric.Canvas {
+    const wrapper = canvasEl.parentElement || document.body;
+    return new fabric.Canvas(canvasEl, {
+      width: wrapper.clientWidth,
+      height: wrapper.clientHeight,
+      backgroundColor: DEFAULT_CANVAS_BG_COLOR,
+    });
+  }
+
+  private applyFabricDefaults(): void {
+    Object.assign(fabric.Object.prototype, FABRIC_DEFAULTS);
+  }
+
+  private createLayoutEngine(): TreeLayoutEngine {
+    const config: LayoutConfig = {
+      ...DEFAULT_LAYOUT_CONFIG,
+      horizontalSpacing: 350,
+      verticalGap: 50
+    };
+
+    return new TreeLayoutEngine(
+      this.canvas,
+      this.nodes,
+      this.connections,
+      config
+    );
+  }
+
+  private setupWindowListeners(): void {
+    window.addEventListener("resize", this.handleResize);
+  }
+
+  private handleResize = (): void => {
+    this.resizeCanvas();
+  };
+
+  private resizeCanvas(): void {
+    const wrapper = this.canvas.getElement().parentElement;
     if (!wrapper) return;
-    this.canvas.setDimensions({ width: wrapper.clientWidth, height: wrapper.clientHeight });
+
+    this.canvas.setDimensions({
+      width: wrapper.clientWidth,
+      height: wrapper.clientHeight
+    });
     this.canvas.renderAll();
   }
 
-  setupEvents(): void {
-    this.canvas.on("mouse:down", (e: any) => {
-      if (this.isPanMode) {
-        this.isDragging = true;
-        this.canvas.selection = false;
-        this.lastPosX = e.e.clientX;
-        this.lastPosY = e.e.clientY;
-        return;
-      }
+  // ============================================
+  // Event Setup
+  // ============================================
 
-      if (e.target && e.target.isEditButton) {
-        const nodeId = e.target.nodeId as number;
-        const node = this.nodes.find((n) => n.id === nodeId);
-        if (node) this.onOpenNode(node);
-        return;
-      }
-    });
-
-    this.canvas.on("mouse:move", (e: any) => {
-      if (this.isPanMode && this.isDragging) {
-        const vpt = this.canvas.viewportTransform!;
-        vpt[4] += e.e.clientX - this.lastPosX;
-        vpt[5] += e.e.clientY - this.lastPosY;
-        this.canvas.requestRenderAll();
-        this.lastPosX = e.e.clientX;
-        this.lastPosY = e.e.clientY;
-      }
-    });
-
-    this.canvas.on("mouse:up", () => {
-      if (this.isPanMode) this.isDragging = false;
-    });
-
-    this.canvas.on("object:moving", (e: any) => {
-      if (e.target && typeof e.target.nodeId !== "undefined") this.updateNodeConnections(e.target.nodeId);
-    });
-
-    this.canvas.on("mouse:wheel", (opt: any) => {
-      opt.e.preventDefault();
-      opt.e.stopPropagation();
-      if (opt.e.ctrlKey) {
-        const delta = opt.e.deltaY;
-        let zoom = this.canvas.getZoom();
-        zoom *= Math.pow(0.989, delta);
-        this.canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
-      } else {
-        const e = opt.e;
-        const vpt = this.canvas.viewportTransform!;
-        vpt[4] -= e.deltaX;
-        vpt[5] -= e.deltaY;
-        this.canvas.setViewportTransform(vpt);
-        this.canvas.requestRenderAll();
-      }
-    });
+  private setupEvents(): void {
+    this.setupSelectionEvents();
+    this.setupMouseEvents();
+    this.setupDoubleClickEvent();
   }
 
-  addNode(nodeDetails: { text: string, description: string }, nodeId?: number, parentId: any = null): number {
-    const sizeType: MindNode["size"] = "medium";
-    const bg = DEFAULT_NODE_COLOR;
-    const textC = DEFAULT_TEXT_COLOR;
-    let x: number, y: number;
+  private setupSelectionEvents(): void {
+    this.canvas.on("selection:created", this.handleSelection);
+    this.canvas.on("selection:updated", this.handleSelection);
+  }
 
-    x = Math.random() * ((this.canvas.width ?? 800) - 300) + 150;
-    y = Math.random() * ((this.canvas.height ?? 600) - 150) + 75;
+  private handleSelection = (e: fabric.IEvent): void => {
+    const activeObject = (e as any).selected?.[0] as NodeFabricObject;
+    if (activeObject?.nodeId !== undefined) {
+      this.showMinimizeControl(activeObject.nodeId);
+    }
+  };
 
-    const updatedNodeId = this.createNode(x, y, nodeDetails.text, bg, textC, parentId, sizeType, nodeId);
-    const node = this.nodes.find((n) => n.id === updatedNodeId);
+  private setupMouseEvents(): void {
+    this.canvas.on("mouse:down", this.handleMouseDown);
+    this.canvas.on("mouse:move", this.handleMouseMove);
+    this.canvas.on("mouse:up", this.handleMouseUp);
+    this.canvas.on("mouse:wheel", this.handleMouseWheel);
+    this.canvas.on("object:moving", this.handleObjectMoving);
+  }
+
+  private handleMouseDown = (e: fabric.IEvent): void => {
+    const event = e.e as MouseEvent;
+    
+    if (this.isPanMode) {
+      this.startPanning(event);
+      return;
+    }
+
+    // Handle custom button clicks
+    const target = e.target as any;
+    if (target?.isEditButton && target.nodeId !== undefined) {
+      const node = this.findNode(target.nodeId);
+      if (node) this.onOpenNode(node);
+    }
+  };
+
+  private startPanning(event: MouseEvent): void {
+    this.isDragging = true;
+    this.canvas.selection = false;
+    this.lastPosX = event.clientX;
+    this.lastPosY = event.clientY;
+  }
+
+  private handleMouseMove = (e: fabric.IEvent): void => {
+    if (!this.isPanMode || !this.isDragging) return;
+
+    const event = e.e as MouseEvent;
+    const vpt = this.canvas.viewportTransform!;
+    
+    vpt[4] += event.clientX - this.lastPosX;
+    vpt[5] += event.clientY - this.lastPosY;
+    
+    this.canvas.requestRenderAll();
+    this.lastPosX = event.clientX;
+    this.lastPosY = event.clientY;
+  };
+
+  private handleMouseUp = (): void => {
+    if (this.isPanMode) {
+      this.isDragging = false;
+    }
+  };
+
+  private handleMouseWheel = (opt: fabric.IEvent): void => {
+    const event = opt.e as WheelEvent;
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.ctrlKey) {
+      this.handleZoomWheel(event);
+    } else {
+      this.handlePanWheel(event);
+    }
+  };
+
+  private handleZoomWheel(event: WheelEvent): void {
+    const delta = event.deltaY;
+    let zoom = this.canvas.getZoom();
+    zoom *= Math.pow(ZOOM_WHEEL_SENSITIVITY, delta);
+    
+    this.canvas.zoomToPoint(
+      { x: event.offsetX, y: event.offsetY },
+      zoom
+    );
+  }
+
+  private handlePanWheel(event: WheelEvent): void {
+    const vpt = this.canvas.viewportTransform!;
+    vpt[4] -= event.deltaX;
+    vpt[5] -= event.deltaY;
+    this.canvas.setViewportTransform(vpt);
+    this.canvas.requestRenderAll();
+  }
+
+  private handleObjectMoving = (e: fabric.IEvent): void => {
+    const target = e.target as NodeFabricObject;
+    if (target?.nodeId !== undefined) {
+      this.updateNodeConnections(target.nodeId);
+    }
+  };
+
+  private setupDoubleClickEvent(): void {
+    const upperCanvas = (this.canvas as any).upperCanvasEl;
+    fabric.util.addListener(upperCanvas, 'dblclick', this.handleDoubleClick);
+  }
+
+  private handleDoubleClick = (e: MouseEvent): void => {
+    const target = (this.canvas as any).findTarget(e);
+    if (target?.nodeId !== undefined) {
+      this.openNodeModalForNodeId(target.nodeId);
+    }
+  };
+
+  // ============================================
+  // Node Management
+  // ============================================
+
+  addNode(nodeDetails: NodeDetails, nodeId?: number, parentId: number | null = null): number {
+    const position = this.calculateRandomPosition();
+    const updatedNodeId = this.createNode(
+      position.x,
+      position.y,
+      nodeDetails.text,
+      DEFAULT_NODE_COLOR,
+      DEFAULT_TEXT_COLOR,
+      parentId,
+      "medium",
+      nodeId
+    );
+
+    const node = this.findNode(updatedNodeId);
     if (node) {
       node.notes = nodeDetails.description;
     }
-    return updatedNodeId;
 
+    return updatedNodeId;
+  }
+
+  private calculateRandomPosition(): { x: number; y: number } {
+    const width = this.canvas.width ?? 800;
+    const height = this.canvas.height ?? 600;
+    
+    return {
+      x: Math.random() * (width - 300) + 150,
+      y: Math.random() * (height - 150) + 75
+    };
   }
 
   createNode(
@@ -200,33 +275,76 @@ export default class CanvasManager {
     bgColor: string,
     textColor: string,
     parentId: number | null = null,
-    sizeType: MindNode["size"] = "medium",
+    sizeType: NodeSize = "medium",
     forcedId?: number
   ): number {
     const nodeId = forcedId ?? this.nodeIdCounter++;
+    const group = this.createNodeGroup(x, y, text, bgColor, textColor, sizeType, parentId);
+    
+    const node = this.createNodeObject(nodeId, group, x, y, text, sizeType, parentId);
+    
+    this.nodes.push(node);
+    this.handleNodeParenting(nodeId, parentId);
+    
+    this.canvas.add(group);
+    this.canvas.setActiveObject(group);
+    this.canvas.renderAll();
+    
+    return nodeId;
+  }
+
+  private createNodeGroup(
+    x: number,
+    y: number,
+    text: string,
+    bgColor: string,
+    textColor: string,
+    sizeType: NodeSize,
+    parentId: number | null
+  ): fabric.Group {
     const size = this.nodeSizes[sizeType];
+    const textObj = this.createTextObject(text, textColor, size, parentId);
+    const rect = this.createRectObject(textObj, bgColor);
+    
+    const group = new fabric.Group([rect, textObj], {
+      left: x,
+      top: y,
+      selectable: true,
+      lockMovementX: true,
+      lockMovementY: true,
+      hasBorders: true,
+      lockRotation: true,
+      originX: "center",
+      originY: "center",
+    } as any);
 
+    group.controls = this.createNodeControls();
+    
+    return group;
+  }
 
-    // Create text object with wrapping enabled
-    const textObj = new fabric.Text(this._getProcessedText(text), {
+  private createTextObject(
+    text: string,
+    textColor: string,
+    size: NodeSizeConfig,
+    parentId: number | null
+  ): fabric.Text {
+    return new fabric.Text(_getProcessedText(this.nodeSizes, text), {
       fontSize: size.fontSize,
       fill: textColor,
       fontFamily: "Lato, opensans, sans-serif",
       fontWeight: parentId === null ? "400" : "300",
       originX: "center",
       originY: "center",
-      splitByGrapheme: true, // Better word wrapping
+      splitByGrapheme: true,
     } as any);
+  }
 
-
-
-
-
-
+  private createRectObject(textObj: fabric.Text, bgColor: string): fabric.Rect {
     const innerWidth = 25 + ((textObj.width || 1) * (textObj.scaleX || 1));
     const innerHeight = 25 + ((textObj.height || 1) * (textObj.scaleY || 1));
 
-    const rect = new fabric.Rect({
+    return new fabric.Rect({
       left: -innerWidth / 2,
       top: -innerHeight / 2,
       width: innerWidth,
@@ -241,27 +359,23 @@ export default class CanvasManager {
         offsetY: 4
       })
     } as any);
+  }
 
-
-    const group = new fabric.Group([rect, textObj], {
-      left: x,
-      top: y,
-      selectable: true,
-
-      hasBorders: true,
-      lockRotation: true,
-      originX: "center",
-      originY: "center",
-    } as any);
-
-    // attach convenience property
+  private createNodeObject(
+    nodeId: number,
+    group: fabric.Group,
+    x: number,
+    y: number,
+    text: string,
+    sizeType: NodeSize,
+    parentId: number | null
+  ): MindNode {
+    const size = this.nodeSizes[sizeType];
     (group as any).nodeId = nodeId;
 
-
-
-    const node: MindNode = {
+    return {
       id: nodeId,
-      group: group as any,
+      group,
       x,
       y,
       parentId,
@@ -274,861 +388,649 @@ export default class CanvasManager {
       media: [],
       aiSummary: "",
       isCollapsed: false,
+      color: _getRandomBrightColor()
     };
-
-    group.controls = {
-      mr: this.createAddChildControl(),
-      // tr: this.addMoreOptionControl(),
-      ml: this.addAIControl(),
-
-    };
-
-    this.nodes.push(node);
-
-    if (parentId !== null) {
-      const parent = this.nodes.find((n) => n.id === parentId);
-      if (parent) {
-        parent.children.push(nodeId);
-        this.createConnection(parentId, nodeId);
-      }
-    }
-
-    this.canvas.add(group);
-    this.canvas.setActiveObject(group);
-    this.canvas.renderAll();
-    return nodeId;
   }
 
+  private handleNodeParenting(nodeId: number, parentId: number | null): void {
+    if (parentId === null) return;
 
-  _getProcessedChildNodeProperties(parent: MindNode): { childX: number, childY: number, nodeColor: string, textColor: string, sizeType: MindNode["size"] } {
-    const parentCenter = parent.group.getCenterPoint();
-    const nodeColor = DEFAULT_NODE_COLOR;
-    const textColor = DEFAULT_TEXT_COLOR;
-    const sizeType: MindNode["size"] = "medium";
-
-    const childCount = parent.children.length;
-    const totalChildren = childCount + 1;
-    const angleStep = Math.PI / Math.max(totalChildren, 2);
-    const startAngle = -Math.PI / 4;
-    const angle = startAngle + angleStep * childCount;
-    const distance = 250;
-
-    let childX = parentCenter.x + distance * Math.cos(angle);
-    let childY = parentCenter.y + distance * Math.sin(angle);
-
-    const size = this.nodeSizes[sizeType];
-    if (!this.canvas.width || !this.canvas.height) return { childX, childY, nodeColor, textColor, sizeType };
-    childX = Math.max(size.width / 2 + 50, Math.min(this.canvas.width - size.width / 2 - 50, childX));
-    childY = Math.max(size.height / 2 + 50, Math.min(this.canvas.height - size.height / 2 - 50, childY));
-
-    return {
-      childX, childY,  nodeColor, textColor, sizeType
+    const parent = this.findNode(parentId);
+    if (parent) {
+      parent.children.push(nodeId);
+      this.createConnection(parentId, nodeId);
     }
   }
 
   addChildNode(parentId: number): void {
-    const parent = this.nodes.find(n => n.id === parentId);
+    const parent = this.findNode(parentId);
     if (!parent) return;
-    const { childX, childY, nodeColor, textColor, sizeType } = this._getProcessedChildNodeProperties(parent);
-    const newNodeId = this.createNode(childX, childY, 'Untitled Node', nodeColor, textColor, parentId, sizeType);
 
-    // checkAndResolveOverlaps(newNodeId);
+    const childProps = _getProcessedChildNodeProperties(
+      parent,
+      this.nodeSizes,
+      this.canvas
+    );
+
+    const newNodeId = this.createNode(
+      childProps.childX,
+      childProps.childY,
+      'Untitled Node',
+      childProps.nodeColor,
+      childProps.textColor,
+      parentId,
+      childProps.sizeType
+    );
+
     this.autoArrange();
-    this.openNodeModalForNodeId(newNodeId)
+    this.openNodeModalForNodeId(newNodeId);
   }
 
+  deleteSelectedNode(): void {
+    const activeObject = this.canvas.getActiveObject() as NodeFabricObject;
+    if (!activeObject?.nodeId) return;
+
+    if (activeObject.nodeId === 0) {
+      alert("Cannot delete the central node.");
+      return;
+    }
+
+    this.deleteNode(activeObject.nodeId);
+    this.autoArrange();
+  }
+
+  deleteNode(nodeId: number): void {
+    const node = this.findNode(nodeId);
+    if (!node) return;
+
+    // Delete children recursively
+    node.children.forEach(childId => this.deleteNode(childId));
+
+    // Remove connections
+    this.removeNodeConnections(nodeId);
+
+    // Remove from parent's children
+    this.removeFromParent(nodeId, node.parentId);
+
+    // Remove from canvas and nodes array
+    this.canvas.remove(node.group);
+    this.nodes = this.nodes.filter(n => n.id !== nodeId);
+    
+    this.canvas.renderAll();
+  }
+
+  private removeNodeConnections(nodeId: number): void {
+    this.connections = this.connections.filter(conn => {
+      if (conn.from === nodeId || conn.to === nodeId) {
+        if (conn.path) {
+          this.canvas.remove(conn.path);
+        }
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private removeFromParent(nodeId: number, parentId: number | null): void {
+    if (parentId === null) return;
+
+    const parent = this.findNode(parentId);
+    if (parent) {
+      parent.children = parent.children.filter(id => id !== nodeId);
+    }
+  }
+
+  saveNodeDetails(updated: Partial<MindNode> & { id: number }): void {
+    const node = this.findNode(updated.id);
+    if (!node) return;
+
+    const nodeIndex = this.nodes.findIndex(n => n.id === updated.id);
+    
+    // Remove old node
+    this.canvas.remove(node.group);
+    this.nodes.splice(nodeIndex, 1);
+
+    // Create updated node
+    this.addNode(
+      {
+        text: updated.title || node.title,
+        description: updated.notes || node.notes
+      },
+      node.id,
+      node.parentId
+    );
+
+    // Update additional properties
+    const updatedNode = this.findNode(updated.id);
+    if (updatedNode) {
+      updatedNode.media = updated.media || node.media;
+      updatedNode.aiSummary = updated.aiSummary || node.aiSummary;
+      updatedNode.group.setCoords();
+      this.updateNodeConnections(updatedNode.id);
+    }
+
+    this.autoArrange();
+  }
+
+  // ============================================
+  // Connection Management
+  // ============================================
+
   createConnection(fromId: number, toId: number): void {
-    const fromNode = this.nodes.find((n) => n.id === fromId);
-    const toNode = this.nodes.find((n) => n.id === toId);
+    const fromNode = this.findNode(fromId);
+    const toNode = this.findNode(toId);
+    
     if (!fromNode || !toNode) return;
-    const fromCenter = fromNode.group.getCenterPoint();
-    const toCenter = toNode.group.getCenterPoint();
-    const path = this.createBezierPath(fromCenter, toCenter);
+
+    const path = createBezierPath(
+      fromNode.group.getCenterPoint(),
+      toNode.group.getCenterPoint(),
+      fromNode.color
+    );
+
     this.connections.push({ from: fromId, to: toId, path });
     this.canvas.add(path);
     this.canvas.sendToBack(path);
   }
 
-  createBezierPath(from: { x: number; y: number }, to: { x: number; y: number }): any {
-    const dx = to.x - from.x;
-    const cp1x = from.x + dx * 0.5;
-    const cp1y = from.y;
-    const cp2x = to.x - dx * 0.5;
-    const cp2y = to.y;
-    const pathString = `M ${from.x} ${from.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${to.x} ${to.y}`;
-    const path = new fabric.Path(pathString, { stroke: DEFAULT_CONNECTOR_COLOR, strokeWidth: 3, fill: "", selectable: false, evented: false } as any);
-    return path;
-  }
-
   updateNodeConnections(nodeId: number): void {
-    const node = this.nodes.find((n) => n.id === nodeId);
+    const node = this.findNode(nodeId);
     if (!node) return;
+
     const center = node.group.getCenterPoint();
     node.x = center.x;
     node.y = center.y;
-    this.connections.forEach((conn) => {
-      if (conn.from === nodeId || conn.to === nodeId) {
-        const fromNode = this.nodes.find((n) => n.id === conn.from);
-        const toNode = this.nodes.find((n) => n.id === conn.to);
-        if (fromNode && toNode) {
-          this.canvas.remove(conn.path);
-          conn.path = this.createBezierPath(fromNode.group.getCenterPoint(), toNode.group.getCenterPoint());
-          this.canvas.add(conn.path);
-          this.canvas.sendToBack(conn.path);
-        }
-      }
-    });
-    this.canvas.renderAll();
-  }
 
-  deleteSelectedNode(): void {
-    const activeObject = this.canvas.getActiveObject() as NodeFabricObject | null;
-    if (!activeObject) return;
+    this.connections.forEach(conn => {
+      if (conn.from !== nodeId && conn.to !== nodeId) return;
 
-    if (activeObject && typeof activeObject.nodeId !== "undefined") {
-      if (activeObject.nodeId === null) return;
-      if (activeObject.nodeId as any == 0) {
-        alert("Cannot delete the central node.");
-      } else {
-        this.deleteNode(activeObject.nodeId);
-      }
-    }
-    this.autoArrange();
-  }
+      const fromNode = this.findNode(conn.from);
+      const toNode = this.findNode(conn.to);
 
-  deleteNode(nodeId: any): void {
-    const node = this.nodes.find((n) => n.id === nodeId);
-    if (!node) return;
-    if (node.children.length > 0) node.children.forEach((c) => this.deleteNode(c));
-    this.connections = this.connections.filter((conn) => {
-      if (conn.from === nodeId || conn.to === nodeId) {
+      if (!fromNode || !toNode) return;
+
+      // Remove old path
+      if (conn.path) {
         this.canvas.remove(conn.path);
-        return false;
       }
-      return true;
+
+      // Create new path
+      conn.path = createBezierPath(
+        fromNode.group.getCenterPoint(),
+        toNode.group.getCenterPoint(),
+        fromNode.color
+      );
+
+      this.canvas.add(conn.path);
+      this.canvas.sendToBack(conn.path);
     });
-    if (node.parentId !== null) {
-      const parent = this.nodes.find((n) => n.id === node.parentId);
-      if (parent) parent.children = parent.children.filter((id) => id !== nodeId);
-    }
-    this.canvas.remove(node.group);
-    this.nodes = this.nodes.filter((n) => n.id !== nodeId);
+
     this.canvas.renderAll();
   }
 
-  togglePanMode(enable: boolean): void {
-    this.isPanMode = enable;
-    if (enable) {
-      this.canvas.defaultCursor = "grab";
-      this.canvas.hoverCursor = "grab";
-      this.nodes.forEach((node) => node.group.set({ selectable: false, evented: false }));
-    } else {
-      this.canvas.defaultCursor = "default";
-      this.canvas.hoverCursor = "move";
-      this.nodes.forEach((node) => {
-        node.group.set({ selectable: true, evented: true })
-      });
-
-    }
-
-    this.canvas.setViewportTransform(this.canvas.viewportTransform as any);
-  }
-
+  // ============================================
+  // Layout Management
+  // ============================================
 
   autoArrange(): void {
-    const rootNodes = this.nodes.filter(n => n.parentId === null);
-    if (rootNodes.length === 0) return;
-
-    // Calculate node depths and assign levels
-    const nodeDepths = new Map<number, number>();
-    const nodesByLevel = new Map<number, number[]>();
-    let maxNodesInLevel = 0;
-
-    const calculateDepth = (nodeId: number, depth = 0): void => {
-      nodeDepths.set(nodeId, depth);
-
-      if (!nodesByLevel.has(depth)) {
-        nodesByLevel.set(depth, []);
-      }
-      nodesByLevel.get(depth)!.push(nodeId);
-
-      // Track maximum nodes in any level
-      maxNodesInLevel = Math.max(maxNodesInLevel, nodesByLevel.get(depth)!.length);
-
-      const node = this.nodes.find(n => n.id === nodeId);
-      if (!node) return;
-      node.children.forEach(childId => calculateDepth(childId, depth + 1));
-    };
-
-    rootNodes.forEach(root => calculateDepth(root.id));
-
-    if (nodeDepths.size === 0) return;
-
-    // Calculate layout parameters
-    const depthValues = Array.from(nodeDepths.values());
-    const maxDepth = depthValues.length > 0 ? Math.max(...depthValues) : 0;
-
-    const horizontalSpacing = 300; // spacing between levels
-    const verticalGap = 40;        // minimum gap between nodes
-    const startX = 150;            // starting X position
-    const canvasHeight = this.canvas.height ?? 600;
-
-    // Group nodes by parent to handle sibling groups
-    const nodesByParent = new Map<number | null, number[]>();
-    this.nodes.forEach(node => {
-      const parentId = node.parentId;
-      if (!nodesByParent.has(parentId)) {
-        nodesByParent.set(parentId, []);
-      }
-      nodesByParent.get(parentId)!.push(node.id);
-    });
-
-    // Calculate heights for nodes
-    const getNodeHeight = (nodeId: number): number => {
-      const node = this.nodes.find(n => n.id === nodeId);
-      if (!node) return 100;
-      return node.group.getScaledHeight() || 100;
-    };
-
-    // Calculate total height needed for a group of siblings
-    const calculateSiblingsHeight = (nodeIds: number[]): number => {
-      let totalHeight = 0;
-      nodeIds.forEach((nodeId, index) => {
-        totalHeight += getNodeHeight(nodeId);
-        if (index < nodeIds.length - 1) {
-          totalHeight += verticalGap;
-        }
-      });
-      return totalHeight;
-    };
-
-    // Track the next available Y position for each level to prevent overlaps
-    const nextAvailableY = new Map<number, number>();
-    // Store node positions temporarily
-    const nodePositions = new Map<number, { x: number; y: number }>();
-
-    // console.log({ maxNodesInLevel, maxDepth });
-
-    // PASS 1: Calculate positions bottom-up (post-order traversal)
-    const calculatePositions = (nodeId: number, x: number, preferredY: number, level: number): { y: number; minY: number; maxY: number } => {
-      const node = this.nodes.find(n => n.id === nodeId);
-      if (!node) return { y: preferredY, minY: preferredY, maxY: preferredY };
-
-      const nodeHeight = getNodeHeight(nodeId);
-      const childIds = nodesByParent.get(nodeId) || [];
-
-      if (childIds.length === 0) {
-        // Leaf node - position with overlap prevention
-        const minYAllowed = nextAvailableY.get(level) || -Infinity;
-
-        // Calculate where the top of the node would be if centered at preferredY
-        const preferredTop = preferredY - (nodeHeight / 2);
-
-        // If preferred position overlaps with previous nodes, shift down
-        const actualTop = Math.max(preferredTop, minYAllowed);
-        const actualY = actualTop + (nodeHeight / 2);
-
-        nodePositions.set(nodeId, { x, y: actualY });
-
-        // Reserve space: bottom of this node + gap
-        const nodeBottom = actualTop + nodeHeight;
-        nextAvailableY.set(level, nodeBottom + verticalGap);
-
-        return { y: actualY, minY: actualTop, maxY: nodeBottom };
-      } else {
-        // Parent node - first position children, then center parent
-        const childX = x + horizontalSpacing;
-        const childLevel = level + 1;
-        const totalChildrenHeight = calculateSiblingsHeight(childIds);
-
-        let childStartY = preferredY - (totalChildrenHeight / 2);
-        let firstChildY = 0;
-        let lastChildY = 0;
-        let childrenMinY = Infinity;
-        let childrenMaxY = -Infinity;
-
-        childIds.forEach((childId, index) => {
-          const childHeight = getNodeHeight(childId);
-          const childCenterY = childStartY + (childHeight / 2);
-
-          const result = calculatePositions(childId, childX, childCenterY, childLevel);
-
-          if (index === 0) firstChildY = result.y;
-          if (index === childIds.length - 1) lastChildY = result.y;
-
-          childrenMinY = Math.min(childrenMinY, result.minY);
-          childrenMaxY = Math.max(childrenMaxY, result.maxY);
-
-          // Update start position for next child based on actual position
-          childStartY = result.maxY + verticalGap;
-        });
-
-        // Center parent between first and last child
-        const centeredY = (firstChildY + lastChildY) / 2;
-
-        // Check for overlap at parent's level
-        const minYAllowed = nextAvailableY.get(level) || -Infinity;
-
-        // Calculate where the top of the parent node would be
-        const preferredTop = centeredY - (nodeHeight / 2);
-        const actualTop = Math.max(preferredTop, minYAllowed);
-        const actualY = actualTop + (nodeHeight / 2);
-
-        nodePositions.set(nodeId, { x, y: actualY });
-
-        // Reserve space: bottom of this node + gap
-        const nodeBottom = actualTop + nodeHeight;
-        nextAvailableY.set(level, nodeBottom + verticalGap);
-
-        // Return the combined bounds of parent and children
-        return {
-          y: actualY,
-          minY: Math.min(actualTop, childrenMinY),
-          maxY: Math.max(nodeBottom, childrenMaxY)
-        };
-      }
-    };
-
-    // Start positioning from root nodes
-    if (rootNodes.length === 1) {
-      calculatePositions(rootNodes[0].id, startX, canvasHeight / 2, 0);
-    } else {
-      const totalRootsHeight = calculateSiblingsHeight(rootNodes.map(n => n.id));
-      let currentY = (canvasHeight / 2) - (totalRootsHeight / 2);
-
-      rootNodes.forEach((rootNode) => {
-        const rootHeight = getNodeHeight(rootNode.id);
-        const rootCenterY = currentY + (rootHeight / 2);
-
-        const result = calculatePositions(rootNode.id, startX, rootCenterY, 0);
-        currentY = result.maxY + verticalGap;
-      });
-    }
-
-    // PASS 2: Apply positions to actual nodes
-    nodePositions.forEach((pos, nodeId) => {
-      const node = this.nodes.find(n => n.id === nodeId);
-      if (!node) return;
-
-      node.x = pos.x;
-      node.y = pos.y;
-
-      try {
-        node.group.set({ left: pos.x, top: pos.y });
-        node.group.setCoords();
-      } catch (err) {
-        console.warn(`Failed to position group for node ${node.id}`, err);
-      }
-
-      this.updateNodeConnections(nodeId);
-    });
-
-    // Update connections with smoother curves
-    this.connections.forEach(conn => {
-      const fromNode = this.nodes.find(n => n.id === conn.from);
-      const toNode = this.nodes.find(n => n.id === conn.to);
-
-      if (fromNode && toNode) {
-        // If an old path exists, remove it
-        if (conn.path) {
-          try {
-            this.canvas.remove(conn.path);
-          } catch {
-            // ignore removal error
-          }
-        }
-
-        const fromCenter = fromNode.group.getCenterPoint();
-        const toCenter = toNode.group.getCenterPoint();
-
-        const dx = toCenter.x - fromCenter.x;
-        const dy = toCenter.y - fromCenter.y;
-
-        // Adjust control points based on distance but cap them
-        const controlPointOffset = Math.min(Math.abs(dx) * 0.3, 100);
-
-        const pathString = `M ${fromCenter.x} ${fromCenter.y} 
-          C ${fromCenter.x + controlPointOffset} ${fromCenter.y},
-            ${toCenter.x - controlPointOffset} ${toCenter.y},
-            ${toCenter.x} ${toCenter.y}`;
-
-        const newPath = new fabric.Path(pathString, {
-          stroke: DEFAULT_CONNECTOR_COLOR,
-          strokeWidth: 3,
-          fill: '',
-          selectable: false,
-          evented: false
-        });
-
-        conn.path = newPath;
-        this.canvas.add(newPath);
-        this.canvas.sendToBack(newPath);
-      }
-    });
-
-    // Optionally center the view on the first root node
-    if (rootNodes.length > 0) {
-      const rootNode = rootNodes[0];
-      const zoom = this.canvas.getZoom();
-      const center = this.canvas.getCenter();
-
-      this.canvas.setViewportTransform([
-        zoom, 0, 0, zoom,
-        100,
-        center.top - rootNode.y * zoom - 50
-      ]);
-    }
-
-    this.canvas.renderAll();
-  }
-  openNodeModalForNodeId(nodeId: any): void {
-    const node = this.nodes.find((n) => n.id === nodeId);
-    if (!node) return;
-    this.onOpenNode(node);
+    this.hideCollapsedChildren();
+    this.layoutEngine.arrange();
   }
 
-  saveNodeDetails(updated: Partial<MindNode> & { id: number; title?: string; notes?: string; media?: MediaFile[] }): void {
-    console.log('Save Node Details being called', updated);
-
-    const node = this.nodes.find((n) => n.id === updated.id);
-    const nodeIndex = this.nodes.findIndex((n) => n.id === updated.id);
-    console.log({ node });
-    if (node) {
-      this.canvas.remove(node.group);
-      // remove old node
-      this.nodes.splice(nodeIndex, 1);
-      // add new node with updated details
-      this.addNode({ text: updated.title || node.title, description: updated.notes || node.notes }, node.id, node.parentId);
-      // Update other properties as needed
-      node.notes = updated.notes || node.notes;
-      node.media = updated.media || node.media;
-      node.aiSummary = updated.aiSummary || node.aiSummary;
-      node.group.setCoords();
-      this.updateNodeConnections(node.id);
-      // this.autoArrange()
-      this.canvas.renderAll();
-
-    }
-    this.autoArrange();
-
-
-    if (!node) return;
-
+  hideCollapsedChildren(): void {
+    this.layoutEngine.hideCollapsedChildren();
   }
 
-  exportJSON(): void {
-    const data = {
-      nodes: this.nodes.map((node) => ({
-        id: node.id,
-        x: node.x,
-        y: node.y,
-        title: node.title,
-        notes: node.notes,
-        media: node.media,
-        aiSummary: node.aiSummary,
-        size: node.size,
-        parentId: node.parentId,
-        children: node.children,
-        backgroundColor: node.group.item(0).fill,
-        textColor: node.group.item(1)?.fill || "#fff",
-      })),
-      connections: this.connections.map((c) => ({ from: c.from, to: c.to })),
-    };
-    const jsonString = JSON.stringify(data, null, 2);
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `mindmap_${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
+  // ============================================
+  // AI Node Structure
+  // ============================================
 
-  getCalculatedJSON() {
-    const data = {
-      nodes: this.nodes.map((node) => ({
-        id: node.id,
-        x: node.x,
-        y: node.y,
-        title: node.title,
-        notes: node.notes,
-        media: node.media,
-        aiSummary: node.aiSummary,
-        size: node.size,
-        parentId: node.parentId,
-        children: node.children,
-        backgroundColor: node.group.item(0).fill,
-        textColor: node.group.item(1)?.fill || "#fff",
-      })),
-      connections: this.connections.map((c) => ({ from: c.from, to: c.to })),
-      nodeIdCounter: this.nodeIdCounter
-    };
-    const jsonString = JSON.stringify(data, null, 2);
-    return jsonString;
-  }
-
-  recreateCanvasFromJson(jsonString:string) {
-     const data = JSON.parse(jsonString);
-      this.canvas.clear();
-      this.canvas.backgroundColor = DEFAULT_CANVAS_BG_COLOR,
-        this.nodes = [];
-        this.connections = [];
-        this.nodeIdCounter = 0;
-        if (data.nodes)
-          data.nodes.forEach((n: any) =>
-            this.createNode(n.x, n.y, n.title || "Node", n.backgroundColor || DEFAULT_CANVAS_BG_COLOR, n.textColor || "#fff", n.parentId, n.size || "medium", n.id)
-          );
-        if (data.connections) data.connections.forEach((c: any) => this.createConnection(c.from, c.to));
-        if(data.nodeIdCounter) this.nodeIdCounter = data.nodeIdCounter
-        data.nodes.forEach((n: any) => {
-          let node = this.nodes.find(x => n.id === x.id)
-          if (node) {
-            node.notes = n.notes;
-            node.media = n.media;
-            node.aiSummary = n.aiSummary;
-          }
-        })
-
-
-        
-
-  }
-
-  importFromFile(e: Event & { target: HTMLInputElement }): void {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = (ev: ProgressEvent<FileReader>) => {
-      try {
-        const data = JSON.parse(ev.target?.result as string);
-        this.canvas.clear();
-        this.nodes = [];
-        this.connections = [];
-        this.nodeIdCounter = 0;
-        if (data.nodes)
-          data.nodes.forEach((n: any) =>
-            this.createNode(n.x, n.y, n.title || "Node", n.backgroundColor || DEFAULT_CANVAS_BG_COLOR, n.textColor || "#fff", n.parentId, n.size || "medium")
-          );
-        if (data.connections) data.connections.forEach((c: any) => this.createConnection(c.from, c.to));
-      } catch (err) {
-        // eslint-disable-next-line no-alert
-        alert("Invalid JSON");
-      }
-    };
-    r.readAsText(f);
-  }
-
-
-
-
-  createAddChildControl(): fabric.Control {
-    const icon =
-      `data:image/svg+xml,%3Csvg width='596' height='596' viewBox='0 0 596 596' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M278.76 560.52C431.61 560.52 555.52 436.61 555.52 283.76C555.52 130.91 431.61 7 278.76 7C125.91 7 2 130.91 2 283.76C2 436.61 125.91 560.52 278.76 560.52Z' fill='%230054e9'/%3E%3Cpath d='M112.416 259V309H444.474V259H112.416Z' fill='white'/%3E%3Cpath d='M303 118H253V450H303V118Z' fill='white'/%3E%3C/svg%3E%0A`;
-
-    const img = new Image();
-    img.src = icon;
-
-    const control = new fabric.Control({
-      x: 0.5,
-      y: 0,
-      offsetX: 20,
-      cursorStyle: 'pointer',
-      mouseUpHandler: (eventData: MouseEvent, transform: FabricTransform): any => {
-        const target = transform.target as NodeFabricObject | undefined;
-        if (!target) {
-          console.warn('addChildControl: missing transform.target');
-          return true;
-        }
-        const canvas = target.canvas;
-        // console.log({ targetId: target });
-
-        if (target.nodeId !== null && typeof target.nodeId !== 'undefined') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          this.addChildNode(target.nodeId as any);
-        } else {
-          console.warn('addChildControl: target.nodeId missing', target);
-        }
-
-        // Optionally you might want to re-render:
-        this.canvas?.requestRenderAll();
-      },
-      render: (ctx: CanvasRenderingContext2D,
-        left: number,
-        top: number,
-        _styleOverride: any,
-        fabricObject: fabric.Object) => {
-        // console.log({ ctx });
-
-        const size = 24;
-        ctx.save();
-        ctx.translate(left, top);
-        ctx.rotate(fabric.util.degreesToRadians(fabricObject.angle || 0));
-        ctx.drawImage(img, -size / 2, -size / 2, size, size);
-        ctx.restore();
-      },
-      // cornerSize: 24,
-      // withConnection: true,
-    });
-    return control;
-  }
-
-  addMoreOptionControl(): fabric.Control {
-    const icon =
-      "data:image/svg+xml,%3Csvg width='596' height='596' viewBox='0 0 596 596' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cg clip-path='url(%23clip0_9130_19159)'%3E%3Cg filter='url(%23filter0_d_9130_19159)'%3E%3Cpath d='M278.76 560.52C431.61 560.52 555.52 436.61 555.52 283.76C555.52 130.91 431.61 7 278.76 7C125.91 7 2 130.91 2 283.76C2 436.61 125.91 560.52 278.76 560.52Z' fill='white'/%3E%3Cpath d='M545.52 283.76C545.52 431.087 426.087 550.52 278.76 550.52C131.432 550.52 12 431.087 12 283.76C12 136.432 131.432 17 278.76 17C426.087 17 545.52 136.432 545.52 283.76Z' stroke='%23DADADA' stroke-width='20'/%3E%3C/g%3E%3Ccircle cx='158.05' cy='284' r='40.0498' fill='%236C6C64'/%3E%3Ccircle cx='279' cy='284' r='40.0498' fill='%236C6C64'/%3E%3Ccircle cx='399.95' cy='284' r='40.0498' fill='%236C6C64'/%3E%3C/g%3E%3Cdefs%3E%3Cfilter id='filter0_d_9130_19159' x='-8' y='1' width='573.52' height='573.52' filterUnits='userSpaceOnUse' color-interpolation-filters='sRGB'%3E%3CfeFlood flood-opacity='0' result='BackgroundImageFix'/%3E%3CfeColorMatrix in='SourceAlpha' type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0' result='hardAlpha'/%3E%3CfeOffset dy='4'/%3E%3CfeGaussianBlur stdDeviation='5'/%3E%3CfeComposite in2='hardAlpha' operator='out'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0'/%3E%3CfeBlend mode='normal' in2='BackgroundImageFix' result='effect1_dropShadow_9130_19159'/%3E%3CfeBlend mode='normal' in='SourceGraphic' in2='effect1_dropShadow_9130_19159' result='shape'/%3E%3C/filter%3E%3CclipPath id='clip0_9130_19159'%3E%3Crect width='595.275' height='595.275' fill='%236c519f'/%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E%0A";
-
-    const img = new Image();
-    img.src = icon;
-
-    const control = new fabric.Control({
-      x: 0.5,
-      y: -0.5,
-      cursorStyle: 'pointer',
-      mouseUpHandler: (eventData: MouseEvent, transform: FabricTransform): any => {
-        const target = transform.target as NodeFabricObject | undefined;
-        if (target && target.nodeId !== null && typeof target.nodeId !== 'undefined') {
-          this.openNodeModalForNodeId(target.nodeId);
-        }
-      },
-      render: (
-        ctx: CanvasRenderingContext2D,
-        left: number,
-        top: number,
-        _styleOverride: any,
-        fabricObject: fabric.Object
-      ) => {
-        const size = 24;
-        ctx.save();
-        ctx.translate(left, top);
-        ctx.rotate(fabric.util.degreesToRadians(fabricObject.angle || 0));
-        ctx.drawImage(img, -size / 2, -size / 2, size, size);
-        ctx.restore();
-      }
-    });
-
-    return control;
-  }
-
-  addAIControl(): fabric.Control {
-    const icon =
-      "data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='12' cy='12' r='12' fill='%23FFC409'/%3E%3Cpath d='M10.0881 19.5C10.0044 19.5001 9.92159 19.4818 9.84563 19.4465C9.76967 19.4112 9.70238 19.3596 9.64847 19.2955C9.59456 19.2314 9.55535 19.1562 9.53359 19.0753C9.51182 18.9944 9.50804 18.9097 9.52251 18.8272V18.8238L10.4009 14H7.00001C6.90561 14 6.81314 13.9733 6.7333 13.9229C6.65346 13.8726 6.5895 13.8006 6.54884 13.7154C6.50817 13.6302 6.49245 13.5353 6.5035 13.4415C6.51454 13.3478 6.5519 13.2591 6.61126 13.1857L13.4603 4.71879C13.5383 4.61983 13.6465 4.54913 13.7685 4.5175C13.8904 4.48586 14.0193 4.49504 14.1356 4.54362C14.2518 4.59221 14.3489 4.67753 14.4121 4.78653C14.4753 4.89554 14.501 5.02223 14.4853 5.14723C14.4853 5.15661 14.4828 5.16567 14.4813 5.17504L13.5997 10H17C17.0944 10.0001 17.1869 10.0268 17.2667 10.0772C17.3466 10.1275 17.4105 10.1995 17.4512 10.2846C17.4918 10.3698 17.5076 10.4648 17.4965 10.5586C17.4855 10.6523 17.4481 10.741 17.3888 10.8144L10.5388 19.2813C10.4849 19.3493 10.4165 19.4043 10.3384 19.4422C10.2604 19.48 10.1749 19.4998 10.0881 19.5Z' fill='black'/%3E%3C/svg%3E%0A"
-    const img = new Image();
-    img.src = icon;
-
-    const control = new fabric.Control({
-      x: 0.5,
-      y: -0.5,
-
-      sizeX: 30,
-      sizeY: 30,
-      cursorStyle: 'pointer',
-      mouseUpHandler: (eventData: MouseEvent, transform: FabricTransform): any => {
-        const target = transform.target as NodeFabricObject | undefined;
-        if (target && target.nodeId !== null && typeof target.nodeId !== 'undefined') {
-          if (!this.onAIControlClick) {
-            console.warn('AI Control clicked, but no handler defined');
-            return;
-          }
-          this.onAIControlClick(eventData, this.nodes.find((n: any) => n.id === target.nodeId)!);
-        }
-      },
-      render: (
-        ctx: CanvasRenderingContext2D,
-        left: number,
-        top: number,
-        _styleOverride: any,
-        fabricObject: fabric.Object
-      ) => {
-        const size = 30;
-        ctx.save();
-        ctx.translate(left, top);
-        ctx.rotate(fabric.util.degreesToRadians(fabricObject.angle || 0));
-        ctx.drawImage(img, -size / 2, -size / 2, size, size);
-        ctx.restore();
-      }
-    });
-
-    return control;
-
-  }
-
- createChildNodeStructure(parentId: number, nodeDetails: AIMindNodeStructure): void {
-  const parent = this.nodes.find(n => n.id === parentId);
-  if (!parent) return;
-  
-  // Update parent's notes
-  parent.notes = parent.notes 
-    ? `${parent.notes}\n\n${nodeDetails.description}` 
-    : nodeDetails.description;
-
-  // Add sources to parent
-  if (nodeDetails.sources && nodeDetails.sources.length > 0) {
-    const sourcesText = nodeDetails.sources
-      .map(source => `${source.name}: ${source.link}`)
-      .join('\n');
-    parent.notes = `${parent.notes}\n\nSources:\n${sourcesText}`;
-  }
-
-
-  try {
-    // Create all child nodes
-    this._createNodesRecursively(parentId, nodeDetails.children);
-  } finally {
-
-    this.autoArrange();
-  }
-  
-}
-
-private _createNodesRecursively(parentId: number, children: AIMindNodeStructure[]): void {
-  if (!children || children.length === 0) return;
-
-  children.forEach(child => {
-    const parent = this.nodes.find(n => n.id === parentId);
+  createChildNodeStructure(parentId: number, nodeDetails: AIMindNodeStructure): void {
+    const parent = this.findNode(parentId);
     if (!parent) return;
 
-    const { childX, childY, nodeColor, textColor, sizeType } = 
-      this._getProcessedChildNodeProperties(parent);
-    
-    const newNodeId = this.createNode(
-      childX, 
-      childY, 
-      child.header, 
-      nodeColor, 
-      textColor, 
-      parentId, 
-      sizeType
+    // Update parent notes and sources
+    this.updateParentWithAIData(parent, nodeDetails);
+
+    // Create child nodes recursively
+    this.createNodesRecursively(parentId, nodeDetails.children);
+    this.autoArrange();
+  }
+
+  private updateParentWithAIData(parent: MindNode, nodeDetails: AIMindNodeStructure): void {
+    parent.notes = parent.notes
+      ? `${parent.notes}\n\n${nodeDetails.description}`
+      : nodeDetails.description;
+
+    if (nodeDetails.sources?.length > 0) {
+      const sourcesText = this.formatSources(nodeDetails.sources);
+      parent.notes = `${parent.notes}\n\nSources:\n${sourcesText}`;
+    }
+  }
+
+  private formatSources(sources: Array<{ name: string; link: string }>): string {
+    return sources
+      .map(source => `${source.name}: ${source.link}`)
+      .join('\n');
+  }
+
+  private createNodesRecursively(parentId: number, children: AIMindNodeStructure[]): void {
+    if (!children?.length) return;
+
+    children.forEach(child => {
+      const parent = this.findNode(parentId);
+      if (!parent) return;
+
+      const newNodeId = this.createChildWithAIData(parent, child);
+      
+      if (child.children?.length > 0) {
+        this.createNodesRecursively(newNodeId, child.children);
+      }
+    });
+  }
+
+  private createChildWithAIData(parent: MindNode, child: AIMindNodeStructure): number {
+    const childProps = _getProcessedChildNodeProperties(
+      parent,
+      this.nodeSizes,
+      this.canvas
     );
 
-    const newNode = this.nodes.find(n => n.id === newNodeId);
+    const newNodeId = this.createNode(
+      childProps.childX,
+      childProps.childY,
+      child.header,
+      childProps.nodeColor,
+      childProps.textColor,
+      parent.id,
+      childProps.sizeType
+    );
+
+    const newNode = this.findNode(newNodeId);
     if (newNode) {
       newNode.notes = child.description || '';
       
-      if (child.sources && child.sources.length > 0) {
-        const sourcesText = child.sources
-          .map(source => `${source.name}: ${source.link}`)
-          .join('\n');
+      if (child.sources?.length > 0) {
+        const sourcesText = this.formatSources(child.sources);
         newNode.notes += `\n\nSources:\n${sourcesText}`;
       }
     }
 
-    if (child.children && child.children.length > 0) {
-      this._createNodesRecursively(newNodeId, child.children);
-    }
-  });
-}
-
-zoomIn() {
-  this.zoomLevel += 0.1;
-  const activeObject = this.canvas.getActiveObject();
-  let point;
-  if (activeObject) {
-    point = activeObject.getCenterPoint();
+    return newNodeId;
   }
-  else {
-    const node = this.nodes.find(n => n.parentId === null);
+
+  // ============================================
+  // Controls
+  // ============================================
+
+  private createNodeControls(): Record<string, fabric.Control> {
+    return {
+      mr: this.createAddChildControl(),
+      ml: this.createAIControl(),
+      br: this.createMinimizeControl(),
+      bl: this.createMaximizeControl(),
+    };
+  }
+
+  private showMinimizeControl(nodeId: number): void {
+    const node = this.findNode(nodeId);
+    if (!node || node.children.length === 0) return;
+
+    node.group.setControlsVisibility({
+      br: !node.isCollapsed,
+      bl: node.isCollapsed
+    });
+  }
+
+  private createAddChildControl(): fabric.Control {
+    const icon = "data:image/svg+xml,%3Csvg width='596' height='596' viewBox='0 0 596 596' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M278.76 560.52C431.61 560.52 555.52 436.61 555.52 283.76C555.52 130.91 431.61 7 278.76 7C125.91 7 2 130.91 2 283.76C2 436.61 125.91 560.52 278.76 560.52Z' fill='%230054e9'/%3E%3Cpath d='M112.416 259V309H444.474V259H112.416Z' fill='white'/%3E%3Cpath d='M303 118H253V450H303V118Z' fill='white'/%3E%3C/svg%3E%0A";
+
+    return this.createControlWithIcon(icon, 0.5, 0, 20, 0, (target) => {
+      if (target.nodeId !== undefined) {
+        this.addChildNode(target.nodeId);
+      }
+    });
+  }
+
+  private createAIControl(): fabric.Control {
+    const icon = "data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='12' cy='12' r='12' fill='%23FFC409'/%3E%3Cpath d='M10.0881 19.5C10.0044 19.5001 9.92159 19.4818 9.84563 19.4465C9.76967 19.4112 9.70238 19.3596 9.64847 19.2955C9.59456 19.2314 9.55535 19.1562 9.53359 19.0753C9.51182 18.9944 9.50804 18.9097 9.52251 18.8272V18.8238L10.4009 14H7.00001C6.90561 14 6.81314 13.9733 6.7333 13.9229C6.65346 13.8726 6.5895 13.8006 6.54884 13.7154C6.50817 13.6302 6.49245 13.5353 6.5035 13.4415C6.51454 13.3478 6.5519 13.2591 6.61126 13.1857L13.4603 4.71879C13.5383 4.61983 13.6465 4.54913 13.7685 4.5175C13.8904 4.48586 14.0193 4.49504 14.1356 4.54362C14.2518 4.59221 14.3489 4.67753 14.4121 4.78653C14.4753 4.89554 14.501 5.02223 14.4853 5.14723C14.4853 5.15661 14.4828 5.16567 14.4813 5.17504L13.5997 10H17C17.0944 10.0001 17.1869 10.0268 17.2667 10.0772C17.3466 10.1275 17.4105 10.1995 17.4512 10.2846C17.4918 10.3698 17.5076 10.4648 17.4965 10.5586C17.4855 10.6523 17.4481 10.741 17.3888 10.8144L10.5388 19.2813C10.4849 19.3493 10.4165 19.4043 10.3384 19.4422C10.2604 19.48 10.1749 19.4998 10.0881 19.5Z' fill='black'/%3E%3C/svg%3E%0A";
+
+    return this.createControlWithIcon(icon, 0.5, -0.5, 0, 0, (target, event) => {
+      if (target.nodeId !== undefined && this.onAIControlClick) {
+        const node = this.findNode(target.nodeId);
+        if (node) {
+          this.onAIControlClick(event, node);
+        }
+      }
+    }, 30);
+  }
+
+  private createMinimizeControl(): fabric.Control {
+    const icon = "data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 108 108' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='54' cy='54' r='54' fill='%23E0E0E0'/%3E%3Cpath d='M28 54L81 54' stroke='black' stroke-width='17' stroke-linecap='round'/%3E%3C/svg%3E%0A";
+
+    return this.createControlWithIcon(icon, 0, 0.5, 0, 20, (target) => {
+      if (target.nodeId !== undefined) {
+        const node = this.findNode(target.nodeId);
+        if (node) {
+          node.isCollapsed = true;
+          this.autoArrange();
+          this.canvas.discardActiveObject();
+          this.canvas.requestRenderAll();
+        }
+      }
+    });
+  }
+
+  private createMaximizeControl(): fabric.Control {
+    const icon = "data:image/svg+xml,%3Csvg width='108' height='108' viewBox='0 0 108 108' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='54' cy='54' r='54' fill='%23E0E0E0'/%3E%3Cpath d='M27 54L80 54' stroke='black' stroke-width='17' stroke-linecap='round'/%3E%3Cpath d='M58 76L80 54' stroke='black' stroke-width='17' stroke-linecap='round'/%3E%3Cpath d='M58 32L80 54' stroke='black' stroke-width='17' stroke-linecap='round'/%3E%3C/svg%3E%0A";
+
+    return this.createControlWithIcon(icon, 0, 0.5, 0, 20, (target) => {
+      if (target.nodeId !== undefined) {
+        const node = this.findNode(target.nodeId);
+        if (node) {
+          node.isCollapsed = false;
+          this.autoArrange();
+          this.canvas.discardActiveObject();
+          this.canvas.requestRenderAll();
+        }
+      }
+    });
+  }
+
+  private createControlWithIcon(
+    iconSrc: string,
+    x: number,
+    y: number,
+    offsetX: number,
+    offsetY: number,
+    handler: (target: NodeFabricObject, event: MouseEvent) => void,
+    size: number = 24
+  ): fabric.Control {
+    const img = new Image();
+    img.src = iconSrc;
+
+    return new fabric.Control({
+      x,
+      y,
+      offsetX,
+      offsetY,
+      cursorStyle: 'pointer',
+      mouseUpHandler: (eventData: MouseEvent, transform: FabricTransform) => {
+        const target = transform.target as NodeFabricObject;
+        if (target) {
+          handler(target, eventData);
+        }
+        this.canvas.requestRenderAll();
+        return true;
+      },
+      render: (
+        ctx: CanvasRenderingContext2D,
+        left: number,
+        top: number,
+        _styleOverride: any,
+        fabricObject: fabric.Object
+      ) => {
+        ctx.save();
+        ctx.translate(left, top);
+        ctx.rotate(fabric.util.degreesToRadians(fabricObject.angle || 0));
+        ctx.drawImage(img, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      }
+    });
+  }
+
+  // ============================================
+  // Pan & Zoom
+  // ============================================
+
+  togglePanMode(enable: boolean): void {
+    this.isPanMode = enable;
+    
+    if (enable) {
+      this.enablePanMode();
+    } else {
+      this.disablePanMode();
+    }
+
+    this.canvas.setViewportTransform(this.canvas.viewportTransform!);
+  }
+
+  private enablePanMode(): void {
+    this.canvas.defaultCursor = "grab";
+    this.canvas.hoverCursor = "grab";
+    this.nodes.forEach(node => {
+      node.group.set({ selectable: false, evented: false });
+    });
+  }
+
+  private disablePanMode(): void {
+    this.canvas.defaultCursor = "default";
+    this.canvas.hoverCursor = "move";
+    this.nodes.forEach(node => {
+      node.group.set({ selectable: true, evented: true });
+    });
+  }
+
+  zoomIn(): void {
+    this.zoomLevel += ZOOM_STEP;
+    this.applyZoom();
+  }
+
+  zoomOut(): void {
+    this.zoomLevel -= ZOOM_STEP;
+    this.applyZoom();
+  }
+
+  private applyZoom(): void {
+    const point = this.getZoomPoint();
+    this.canvas.zoomToPoint(point, this.zoomLevel);
+    this.canvas.requestRenderAll();
+  }
+
+  private getZoomPoint(): fabric.Point {
+    const activeObject = this.canvas.getActiveObject();
+    
+    if (activeObject) {
+      return activeObject.getCenterPoint();
+    }
+
+    const rootNode = this.nodes.find(n => n.parentId === null);
+    if (rootNode) {
+      return rootNode.group.getCenterPoint();
+    }
+
+    return new fabric.Point(
+      (this.canvas.width ?? 800) / 2,
+      (this.canvas.height ?? 600) / 2
+    );
+  }
+
+  zoomToObject(nodeId: number, zoomLevel: number = 2): void {
+    const node = this.findNode(nodeId);
+    if (!node) return;
+
+    const center = node.group.getCenterPoint();
+    const vpw = this.canvas.getWidth();
+    const vph = this.canvas.getHeight();
+
+    const x = vpw / 2 - center.x * zoomLevel;
+    const y = vph / 2 - center.y * zoomLevel;
+
+    this.canvas.setZoom(zoomLevel);
+    this.canvas.viewportTransform = [zoomLevel, 0, 0, zoomLevel, x, y];
+    this.canvas.requestRenderAll();
+  }
+
+  // ============================================
+  // Import/Export
+  // ============================================
+
+  exportJSON(): void {
+    const data = this.serializeCanvas();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { 
+      type: "application/json" 
+    });
+    
+    this.downloadFile(blob, `mindmap_${Date.now()}.json`);
+  }
+
+  private serializeCanvas(): any {
+    return {
+      nodes: this.nodes.map(node => ({
+        id: node.id,
+        x: node.x,
+        y: node.y,
+        title: node.title,
+        notes: node.notes,
+        media: node.media,
+        aiSummary: node.aiSummary,
+        size: node.size,
+        parentId: node.parentId,
+        children: node.children,
+        backgroundColor: node.group.item(0)?.fill,
+        textColor: node.group.item(1)?.fill || "#fff",
+      })),
+      connections: this.connections.map(c => ({ 
+        from: c.from, 
+        to: c.to 
+      })),
+      nodeIdCounter: this.nodeIdCounter
+    };
+  }
+
+  private downloadFile(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  getCalculatedJSON(): any {
+    return _getCalculatedJSON(this.nodes, this.connections, this.nodeIdCounter);
+  }
+
+  recreateCanvasFromJson(jsonString: string): void {
+    try {
+      const data = JSON.parse(jsonString);
+      this.clearCanvas();
+      this.rebuildFromData(data);
+    } catch (error) {
+      console.error("Failed to recreate canvas from JSON:", error);
+      throw error;
+    }
+  }
+
+  private clearCanvas(): void {
+    this.canvas.clear();
+    this.canvas.backgroundColor = DEFAULT_CANVAS_BG_COLOR;
+    this.nodes = [];
+    this.connections = [];
+    this.nodeIdCounter = 0;
+  }
+
+  private rebuildFromData(data: any): void {
+    // Create nodes
+    if (data.nodes) {
+      data.nodes.forEach((n: any) => {
+        this.createNode(
+          n.x,
+          n.y,
+          n.title || "Node",
+          n.backgroundColor || DEFAULT_NODE_COLOR,
+          n.textColor || DEFAULT_TEXT_COLOR,
+          n.parentId,
+          n.size || "medium",
+          n.id
+        );
+      });
+    }
+
+    // Create connections
+    if (data.connections) {
+      data.connections.forEach((c: any) => {
+        this.createConnection(c.from, c.to);
+      });
+    }
+
+    // Restore counter
+    if (data.nodeIdCounter) {
+      this.nodeIdCounter = data.nodeIdCounter;
+    }
+
+    // Restore additional node data
+    if (data.nodes) {
+      data.nodes.forEach((n: any) => {
+        const node = this.findNode(n.id);
+        if (node) {
+          node.notes = n.notes || "";
+          node.media = n.media || [];
+          node.aiSummary = n.aiSummary || "";
+        }
+      });
+    }
+  }
+
+  importFromFile(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event: ProgressEvent<FileReader>) => {
+      try {
+        const jsonString = event.target?.result as string;
+        this.recreateCanvasFromJson(jsonString);
+      } catch (error) {
+        console.error("Invalid JSON file:", error);
+        alert("Invalid JSON file");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ============================================
+  // Utility Methods
+  // ============================================
+
+  private findNode(nodeId: number): MindNode | undefined {
+    return this.nodes.find(n => n.id === nodeId);
+  }
+
+  openNodeModalForNodeId(nodeId: number): void {
+    const node = this.findNode(nodeId);
     if (node) {
-      point = node.group.getCenterPoint();
+      this.onOpenNode(node);
     }
   }
-  this.canvas.zoomToPoint(new fabric.Point(point.x, point.y), this.zoomLevel);
 
-  this.canvas.requestRenderAll();
-}
-zoomOut() {
- this.zoomLevel -= 0.1;
-  const activeObject = this.canvas.getActiveObject();
-  let point;
-  if (activeObject) {
-    point = activeObject
-  }
-  else {
-    const node = this.nodes.find(n => n.parentId === null);
-    if (node) {
-      point = node.group
-    }
-  }
-  this.canvas.zoomToPoint(point.getCenterPoint(), this.zoomLevel);
-
-  this.canvas.requestRenderAll();
-}
-
-
-zoomToObject(nodeId: number, zoomLevel = 2) {
-
-  const node = this.nodes.find(n => n.id === nodeId);
-  if (!node) return;
-
-  const obj = node.group;
-
-  // Get the center of the object
-  const center = obj.getCenterPoint();
-
-  // Set the zoom level (e.g., 2 = 200%)
-  this.canvas.setZoom(zoomLevel);
-
-  // Calculate the viewport transform to center the object
-  const vpw = this.canvas.getWidth();
-  const vph = this.canvas.getHeight();
-
-  // Compute panning to center the object after zoom
-  const x = vpw / 2 - center.x * zoomLevel;
-  const y = vph / 2 - center.y * zoomLevel;
-
-  // Apply the transformation
-  this.canvas.viewportTransform = [zoomLevel, 0, 0, zoomLevel, x, y];
-  this.canvas.requestRenderAll();
-}
-  
-
-
-  _getProcessedText(text: string) {
-
-    const maxWidth = 250;
-    const maxLines = 5;
-    const avgCharWidth = this.nodeSizes["medium"].fontSize * 0.6; // Approximate character width
-    const maxCharsPerLine = Math.floor(maxWidth / avgCharWidth);
-    let processedText = '';
-    let lineCount = 0;
-    let remainingText = text;
-
-    while (remainingText.length > 0 && lineCount < maxLines) {
-      if (remainingText.length <= maxCharsPerLine) {
-        processedText += remainingText;
-        break;
-      }
-
-      // Find last space within maxCharsPerLine to avoid breaking words
-      let breakPoint = remainingText.lastIndexOf(' ', maxCharsPerLine);
-      if (breakPoint === -1 || breakPoint === 0) {
-        breakPoint = maxCharsPerLine;
-      }
-
-      processedText += remainingText.substring(0, breakPoint);
-      remainingText = remainingText.substring(breakPoint).trim();
-
-      lineCount++;
-
-      if (remainingText.length > 0 && lineCount < maxLines) {
-        processedText += '\n';
-      }
-    }
-
-
-    if (remainingText.length > 0 && remainingText.length > maxCharsPerLine) {
-      processedText += '...';
-    }
-    return processedText;
-  }
+  // ============================================
+  // Cleanup
+  // ============================================
 
   dispose(): void {
+    // Remove event listeners
+    window.removeEventListener('resize', this.handleResize);
+
+    // Remove canvas event listeners
+    this.canvas.off('selection:created', this.handleSelection);
+    this.canvas.off('selection:updated', this.handleSelection);
+    this.canvas.off('mouse:down', this.handleMouseDown);
+    this.canvas.off('mouse:move', this.handleMouseMove);
+    this.canvas.off('mouse:up', this.handleMouseUp);
+    this.canvas.off('mouse:wheel', this.handleMouseWheel);
+    this.canvas.off('object:moving', this.handleObjectMoving);
+
+    // Dispose canvas
     this.canvas.dispose();
 
-    // optional: remove listeners we added on window (if needed)
-    window.removeEventListener('resize', this.resizeCanvas) // careful: bound reference required
-    // null out canvas reference
-    // @ts-ignore
-    this.canvas = null as any;
+    // Clear references
+    this.nodes = [];
+    this.connections = [];
+    (this.canvas as any) = null;
   }
 }
