@@ -2,6 +2,9 @@
 
 Built with React, Fabric.js, LangChain & Google Gemini
 
+![](https://github.com/purplewine/mind-mapper/blob/main/public/mindmapper.gif?raw=true)
+
+
 
 
 🚀 Overview
