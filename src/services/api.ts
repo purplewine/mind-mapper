@@ -62,4 +62,34 @@ export const createChildrenMindMap = async (textToElaborate: string) => {
         return null;
     }
 };
+export const callGenerateImageAPI = async (textToElaborate: string) => {
+    try {
+        const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+
+        if (!token) {
+            console.error('No authentication token available');
+            return null;
+        }
+
+        const response = await fetch(`${API_URL}/generateImage`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ text: textToElaborate })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Elaboration:', data.elaboration);
+        return data;
+    } catch (error) {
+        console.error('Error calling protected API:', error);
+        return null;
+    }
+};
 

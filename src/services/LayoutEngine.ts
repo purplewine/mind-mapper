@@ -33,7 +33,7 @@ export interface NodeBounds {
 }
 
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
-  horizontalSpacing: 300,
+  horizontalSpacing: 10000,
   verticalGap: 40,
   startX: 150,
   defaultNodeHeight: 100,
@@ -175,6 +175,8 @@ export class TreeLayoutCalculator {
   ): NodeBounds {
     const childX = x + this.config.horizontalSpacing;
     const childLevel = level + 1;
+    console.log({childX});
+    
     const totalChildrenHeight = this.calculateSiblingsHeight(childIds);
 
     let childStartY = preferredY - totalChildrenHeight / 2;

@@ -15,6 +15,8 @@ import {
 const DEFAULT_NODE_COLOR = "#ffffff";
 const DEFAULT_TEXT_COLOR = "#000000";
 const DEFAULT_CANVAS_BG_COLOR = "#d8dade";
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 1;
 
 const FABRIC_DEFAULTS = {
   cornerColor: "#ffffff",
@@ -97,7 +99,7 @@ export default class CanvasManager {
   private connections: Connection[] = [];
   private nodeIdCounter = 0;
   private layoutEngine: TreeLayoutEngine;
-  
+
   // Interaction state
   private isPanMode = false;
   private isDragging = false;
@@ -108,22 +110,25 @@ export default class CanvasManager {
   // Callbacks
   private onOpenNode: (node: MindNode) => void;
   private onAIControlClick?: (event: MouseEvent, node: MindNode) => void;
+  private openSummarizer?: () => void;
 
   private readonly nodeSizes: NodeSizes = {
     small: { width: 120, height: 50, fontSize: 14 },
     medium: { width: 150, height: 60, fontSize: 16 },
-    large: { width: 180, height: 70, fontSize: 18 },
-    xlarge: { width: 220, height: 85, fontSize: 20 },
+    large: { width: 180, height: 70, fontSize: 24 },
+    xlarge: { width: 220, height: 85, fontSize: 32 },
   };
 
   constructor(
     canvasEl: HTMLCanvasElement,
     nodeJson: string | null,
     onOpenNode: (node: MindNode) => void,
-    onAIControlClick?: (event: MouseEvent, node: MindNode) => void
+    onAIControlClick?: (event: MouseEvent, node: MindNode) => void,
+    openSummarizer?: () => void
   ) {
     this.onOpenNode = onOpenNode;
     this.onAIControlClick = onAIControlClick;
+    this.openSummarizer = openSummarizer;
 
     this.canvas = this.initializeCanvas(canvasEl);
     this.applyFabricDefaults();
@@ -157,7 +162,7 @@ export default class CanvasManager {
   private createLayoutEngine(): TreeLayoutEngine {
     const config: LayoutConfig = {
       ...DEFAULT_LAYOUT_CONFIG,
-      horizontalSpacing: 350,
+      horizontalSpacing: 500,
       verticalGap: 50
     };
 
@@ -220,7 +225,7 @@ export default class CanvasManager {
 
   private handleMouseDown = (e: fabric.IEvent): void => {
     const event = e.e as MouseEvent;
-    
+
     if (this.isPanMode) {
       this.startPanning(event);
       return;
@@ -246,10 +251,10 @@ export default class CanvasManager {
 
     const event = e.e as MouseEvent;
     const vpt = this.canvas.viewportTransform!;
-    
+
     vpt[4] += event.clientX - this.lastPosX;
     vpt[5] += event.clientY - this.lastPosY;
-    
+
     this.canvas.requestRenderAll();
     this.lastPosX = event.clientX;
     this.lastPosY = event.clientY;
@@ -277,7 +282,7 @@ export default class CanvasManager {
     const delta = event.deltaY;
     let zoom = this.canvas.getZoom();
     zoom *= Math.pow(ZOOM_WHEEL_SENSITIVITY, delta);
-    
+
     this.canvas.zoomToPoint(
       { x: event.offsetX, y: event.offsetY },
       zoom
@@ -307,7 +312,8 @@ export default class CanvasManager {
   private handleDoubleClick = (e: MouseEvent): void => {
     const target = (this.canvas as any).findTarget(e);
     if (target?.nodeId !== undefined) {
-      this.openNodeModalForNodeId(target.nodeId);
+      this.openSummarizer?.();
+      // this.openNodeModalForNodeId(target.nodeId);
     }
   };
 
@@ -339,7 +345,7 @@ export default class CanvasManager {
   private calculateRandomPosition(): { x: number; y: number } {
     const width = this.canvas.width ?? 800;
     const height = this.canvas.height ?? 600;
-    
+
     return {
       x: Math.random() * (width - 300) + 150,
       y: Math.random() * (height - 150) + 75
@@ -353,21 +359,24 @@ export default class CanvasManager {
     bgColor: string,
     textColor: string,
     parentId: number | null = null,
-    sizeType: NodeSize = "medium",
+    sizeType: NodeSize = "small",
     forcedId?: number
   ): number {
     const nodeId = forcedId ?? this.nodeIdCounter++;
+    if (parentId === null) {
+      sizeType = "large";
+    }
     const group = this.createNodeGroup(x, y, text, bgColor, textColor, sizeType, parentId);
-    
+
     const node = this.createNodeObject(nodeId, group, x, y, text, sizeType, parentId);
-    
+
     this.nodes.push(node);
     this.handleNodeParenting(nodeId, parentId);
-    
+
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
     this.canvas.renderAll();
-    
+
     return nodeId;
   }
 
@@ -382,8 +391,8 @@ export default class CanvasManager {
   ): fabric.Group {
     const size = this.nodeSizes[sizeType];
     const textObj = this.createTextObject(text, textColor, size, parentId);
-    const rect = this.createRectObject(textObj, bgColor);
-    
+    const rect = this.createRectObject(textObj, bgColor, size);
+
     const group = new fabric.Group([rect, textObj], {
       left: x,
       top: y,
@@ -397,7 +406,7 @@ export default class CanvasManager {
     } as any);
 
     group.controls = this.createNodeControls();
-    
+
     return group;
   }
 
@@ -411,16 +420,21 @@ export default class CanvasManager {
       fontSize: size.fontSize,
       fill: textColor,
       fontFamily: "Lato, opensans, sans-serif",
-      fontWeight: parentId === null ? "400" : "300",
+      fontWeight: parentId === null ? "800" : "400",
       originX: "center",
       originY: "center",
+      textAlign: "center",
       splitByGrapheme: true,
     } as any);
   }
 
-  private createRectObject(textObj: fabric.Text, bgColor: string): fabric.Rect {
-    const innerWidth = 25 + ((textObj.width || 1) * (textObj.scaleX || 1));
-    const innerHeight = 25 + ((textObj.height || 1) * (textObj.scaleY || 1));
+  private createRectObject(textObj: fabric.Text, bgColor: string, size: NodeSizeConfig): fabric.Rect {
+
+    const innerWidth = size.width + ((textObj.width || 1) * (textObj.scaleX || 1));
+    const innerHeight = size.height + ((textObj.height || 1) * (textObj.scaleY || 1));
+
+    // const innerWidth = 25 + ((textObj.width || 1) * (textObj.scaleX || 1));
+    // const innerHeight = 25 + ((textObj.height || 1) * (textObj.scaleY || 1));
 
     return new fabric.Rect({
       left: -innerWidth / 2,
@@ -486,7 +500,7 @@ export default class CanvasManager {
 
     // Use parent's position as temporary position
     // autoArrange will position it correctly
-    const tempX = parent.x + 200;
+    const tempX = parent.x + 1000;
     const tempY = parent.y;
 
     const newNodeId = this.createNode(
@@ -533,7 +547,7 @@ export default class CanvasManager {
     // Remove from canvas and nodes array
     this.canvas.remove(node.group);
     this.nodes = this.nodes.filter(n => n.id !== nodeId);
-    
+
     this.canvas.renderAll();
   }
 
@@ -563,7 +577,7 @@ export default class CanvasManager {
     if (!node) return;
 
     const nodeIndex = this.nodes.findIndex(n => n.id === updated.id);
-    
+
     // Remove old node
     this.canvas.remove(node.group);
     this.nodes.splice(nodeIndex, 1);
@@ -597,7 +611,7 @@ export default class CanvasManager {
   createConnection(fromId: number, toId: number): void {
     const fromNode = this.findNode(fromId);
     const toNode = this.findNode(toId);
-    
+
     if (!fromNode || !toNode) return;
 
     const path = createBezierPath(
@@ -703,7 +717,7 @@ export default class CanvasManager {
       if (!parent) return;
 
       const newNodeId = this.createChildWithAIData(parent, child);
-      
+
       if (child.children?.length > 0) {
         this.createNodesRecursively(newNodeId, child.children);
       }
@@ -729,7 +743,7 @@ export default class CanvasManager {
     const newNode = this.findNode(newNodeId);
     if (newNode) {
       newNode.notes = child.description || '';
-      
+
       if (child.sources?.length > 0) {
         const sourcesText = this.formatSources(child.sources);
         newNode.notes += `\n\nSources:\n${sourcesText}`;
@@ -757,8 +771,9 @@ export default class CanvasManager {
     if (!node || node.children.length === 0) return;
 
     node.group.setControlsVisibility({
-      br: !node.isCollapsed,
-      bl: node.isCollapsed
+      br: !(node.isCollapsed),
+      bl: node.children.length === 0 ? false : node.isCollapsed,
+      mr: !(node.isCollapsed),
     });
   }
 
@@ -790,13 +805,9 @@ export default class CanvasManager {
 
     return this.createControlWithIcon(icon, 0, 0.5, 0, 20, (target) => {
       if (target.nodeId !== undefined) {
-        const node = this.findNode(target.nodeId);
-        if (node) {
-          node.isCollapsed = true;
-          this.autoArrange();
-          this.canvas.discardActiveObject();
-          this.canvas.requestRenderAll();
-        }
+        this.minimizeNode(target.nodeId);
+        this.autoArrange();
+
       }
     });
   }
@@ -808,13 +819,213 @@ export default class CanvasManager {
       if (target.nodeId !== undefined) {
         const node = this.findNode(target.nodeId);
         if (node) {
+          this.minimizeSublings(target.nodeId);
           node.isCollapsed = false;
+          const rect = node.group.getObjects().find(o => o.type === "rect");
+          if (rect) {
+            rect.set({
+              fill: DEFAULT_NODE_COLOR
+            });
+          }
           this.autoArrange();
           this.canvas.discardActiveObject();
           this.canvas.requestRenderAll();
+
+          this.fitVisibleDescendantsInView(node.id);
         }
       }
     });
+  }
+
+
+  private minimizeNode(nodeId: number): void {
+    const node = this.findNode(nodeId);
+    if (!node) return;
+    if (node) {
+      node.isCollapsed = true;
+      const rect = node.group.getObjects().find(o => o.type === "rect");
+      if (rect) {
+        rect.set({
+          fill: "#fff6db"
+        });
+      }
+      this.canvas.discardActiveObject();
+      this.canvas.requestRenderAll();
+    }
+  }
+
+  private minimizeSublings(nodeId: number): void {
+    const node = this.findNode(nodeId);
+    if (!node) return;
+    if (node && node.parentId !== null) {
+      const parentNode = this.findNode(node.parentId)
+      if (parentNode) {
+        parentNode.children.forEach(childId => {
+          if (childId !== nodeId) {
+            this.minimizeAllDecendants(childId);
+          }
+        });
+      }
+      
+    }
+  }
+
+  private minimizeAllDecendants(nodeId: number): void {
+    const node = this.findNode(nodeId);
+    if (!node) return;
+    if (node) {
+      if (node.children.length > 0) {
+        for (const childNode of node.children) {
+          this.minimizeAllDecendants(childNode);
+        }
+        this.minimizeNode(nodeId);
+      }
+    }
+  }
+
+
+  private fitVisibleDescendantsInView(parentNodeId: number, animated: boolean = true): void {
+    // Get all visible descendants recursively
+    const visibleNodes = this.getAllVisibleDescendants(parentNodeId);
+
+    // Include the parent node itself
+    const parentNode = this.nodes.find(n => n.id === parentNodeId);
+    if (parentNode) {
+      visibleNodes.push(parentNode);
+    }
+
+    if (visibleNodes.length === 0) return;
+
+    // Get bounding box of all visible nodes
+    const bounds = this.getNodesBoundingBox(visibleNodes);
+
+    if (!bounds) return;
+
+    const padding = 50;
+    const canvasWidth = this.canvas.width ?? 800;
+    const canvasHeight = this.canvas.height ?? 600;
+
+    // Calculate zoom level to fit all visible nodes
+    const zoomX = canvasWidth / (bounds.width + padding * 2);
+    const zoomY = canvasHeight / (bounds.height + padding * 2);
+    const targetZoom = Math.min(zoomX, zoomY, MAX_ZOOM);
+
+    const centerX = bounds.left + bounds.width / 2;
+    const centerY = bounds.top + bounds.height / 2;
+
+    if (animated) {
+      this.animateViewport(targetZoom, centerX, centerY);
+    } else {
+      this.zoomLevel = Math.max(targetZoom, MIN_ZOOM);
+      this.canvas.setZoom(this.zoomLevel);
+
+      const vpt = this.canvas.viewportTransform!;
+      vpt[4] = canvasWidth / 2 - centerX * this.zoomLevel;
+      vpt[5] = canvasHeight / 2 - centerY * this.zoomLevel;
+
+      this.canvas.requestRenderAll();
+    }
+  }
+
+  private getAllVisibleDescendants(parentNodeId: number): MindNode[] {
+    const visibleNodes: MindNode[] = [];
+    const queue: number[] = [parentNodeId];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+
+      // Get direct children of current node
+      const children = this.nodes.filter(n => n.parentId === currentId);
+
+      for (const child of children) {
+        // Only include if the node is visible
+        if (child.group.visible) {
+          visibleNodes.push(child);
+
+          // If this child has visible children, add it to queue to process its children
+          const hasVisibleChildren = this.nodes.some(
+            n => n.parentId === child.id && n.group.visible
+          );
+
+          if (hasVisibleChildren) {
+            queue.push(child.id);
+          }
+        }
+      }
+    }
+
+    return visibleNodes;
+  }
+
+  private getNodesBoundingBox(nodes: MindNode[]): {
+    left: number;
+    top: number;
+    width: number;
+    height: number
+  } | null {
+    if (nodes.length === 0) return null;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    nodes.forEach(node => {
+      const bounds = node.group.getBoundingRect(true); // true for absolute coords
+
+      minX = Math.min(minX, bounds.left);
+      minY = Math.min(minY, bounds.top);
+      maxX = Math.max(maxX, bounds.left + bounds.width);
+      maxY = Math.max(maxY, bounds.top + bounds.height);
+    });
+
+    return {
+      left: minX,
+      top: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+  }
+
+  private animateViewport(targetZoom: number, centerX: number, centerY: number): void {
+    const startZoom = this.zoomLevel;
+    const canvasWidth = this.canvas.width ?? 800;
+    const canvasHeight = this.canvas.height ?? 600;
+
+    const startVpt = [...this.canvas.viewportTransform!];
+    const targetVpt = [
+      targetZoom, 0, 0, targetZoom,
+      canvasWidth / 2 - centerX * targetZoom,
+      canvasHeight / 2 - centerY * targetZoom
+    ];
+
+    const duration = 400; // ms - slightly longer for bigger movements
+    const startTime = Date.now();
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Easing function (ease-in-out for smoother animation)
+      const eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      this.zoomLevel = startZoom + (targetZoom - startZoom) * eased;
+      this.canvas.setZoom(this.zoomLevel);
+
+      const vpt = this.canvas.viewportTransform!;
+      vpt[4] = startVpt[4] + (targetVpt[4] - startVpt[4]) * eased;
+      vpt[5] = startVpt[5] + (targetVpt[5] - startVpt[5]) * eased;
+
+      this.canvas.requestRenderAll();
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    animate();
   }
 
   private createControlWithIcon(
@@ -865,7 +1076,7 @@ export default class CanvasManager {
 
   togglePanMode(enable: boolean): void {
     this.isPanMode = enable;
-    
+
     if (enable) {
       this.enablePanMode();
     } else {
@@ -892,24 +1103,45 @@ export default class CanvasManager {
   }
 
   zoomIn(): void {
-    this.zoomLevel += ZOOM_STEP;
+    this.zoomLevel = Math.min(this.zoomLevel + ZOOM_STEP, MAX_ZOOM); // Optional: add max limit
     this.applyZoom();
   }
 
   zoomOut(): void {
-    this.zoomLevel -= ZOOM_STEP;
+    this.zoomLevel = Math.max(this.zoomLevel - ZOOM_STEP, MIN_ZOOM); // Optional: add min limit
     this.applyZoom();
   }
 
   private applyZoom(): void {
+    const center = this.canvas.getCenter();
     const point = this.getZoomPoint();
-    this.canvas.zoomToPoint(point, this.zoomLevel);
+
+    // Calculate the point in viewport coordinates
+    const viewportPoint = fabric.util.transformPoint(
+      point,
+      this.canvas.viewportTransform!
+    );
+
+    // Set zoom level
+    this.canvas.setZoom(this.zoomLevel);
+
+    // Calculate new viewport transform to keep the zoom point stationary
+    const newViewportPoint = fabric.util.transformPoint(
+      point,
+      this.canvas.viewportTransform!
+    );
+
+    // Adjust viewport to compensate for the shift
+    const vpt = this.canvas.viewportTransform!;
+    vpt[4] += viewportPoint.x - newViewportPoint.x;
+    vpt[5] += viewportPoint.y - newViewportPoint.y;
+
     this.canvas.requestRenderAll();
   }
 
   private getZoomPoint(): fabric.Point {
     const activeObject = this.canvas.getActiveObject();
-    
+
     if (activeObject) {
       return activeObject.getCenterPoint();
     }
@@ -919,10 +1151,9 @@ export default class CanvasManager {
       return rootNode.group.getCenterPoint();
     }
 
-    return new fabric.Point(
-      (this.canvas.width ?? 800) / 2,
-      (this.canvas.height ?? 600) / 2
-    );
+    // Use canvas center in world coordinates
+    const center = this.canvas.getCenter();
+    return new fabric.Point(center.left, center.top);
   }
 
   zoomToObject(nodeId: number, zoomLevel: number = 2): void {
@@ -947,10 +1178,10 @@ export default class CanvasManager {
 
   exportJSON(): void {
     const data = this.serializeCanvas();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { 
-      type: "application/json" 
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json"
     });
-    
+
     this.downloadFile(blob, `mindmap_${Date.now()}.json`);
   }
 
@@ -969,10 +1200,11 @@ export default class CanvasManager {
         children: node.children,
         backgroundColor: node.group.item(0)?.fill,
         textColor: node.group.item(1)?.fill || "#fff",
+        isCollapsed: node.isCollapsed,
       })),
-      connections: this.connections.map(c => ({ 
-        from: c.from, 
-        to: c.to 
+      connections: this.connections.map(c => ({
+        from: c.from,
+        to: c.to
       })),
       nodeIdCounter: this.nodeIdCounter
     };
@@ -1049,6 +1281,7 @@ export default class CanvasManager {
           node.notes = n.notes || "";
           node.media = n.media || [];
           node.aiSummary = n.aiSummary || "";
+          node.isCollapsed = n.isCollapsed || false;
         }
       });
     }
@@ -1057,7 +1290,7 @@ export default class CanvasManager {
   importFromFile(e: Event): void {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
-    
+
     if (!file) return;
 
     const reader = new FileReader();

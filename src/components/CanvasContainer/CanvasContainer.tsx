@@ -1,5 +1,5 @@
 // MindMapper.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Dock from './../Dock/Dock';
 import { IonBreadcrumb, IonBreadcrumbs, IonButton, IonButtons, IonCard, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonMenu, IonPopover, IonTitle, IonToolbar, useIonAlert, useIonLoading, useIonModal, useIonPopover, useIonToast } from '@ionic/react';
 import './Canvas.css';
@@ -42,14 +42,20 @@ const MindMapper: React.FC<IMindMapper> = ({ project, updateProjectWithDebounce 
         onSave: (updated: any) => {
             console.log({ updated });
 
-            managerRef.current?.saveNodeDetails(updated);
-            saveProject();
+            // managerRef.current?.saveNodeDetails(updated);
+            // saveProject();
 
-            dismissNodeModal();
-            setSelectedNode(null);
+            // dismissNodeModal();
+            // setSelectedNode(null);
         }
     });
 
+
+    const updateNode = useCallback((node: any) => {
+        managerRef.current?.saveNodeDetails(node);
+        saveProject();     
+        menuController.close('end');   
+    }, [])
     const [presentToast, dismissToast] = useIonToast();
 
     const [presentAlert] = useIonAlert();
@@ -106,11 +112,11 @@ const MindMapper: React.FC<IMindMapper> = ({ project, updateProjectWithDebounce 
             }
         },
 
-        {
-            icon: downloadOutline, label: 'Export', onClick: () => {
-                managerRef.current?.exportJSON();
-            }
-        },
+        // {
+        //     icon: downloadOutline, label: 'Export', onClick: () => {
+        //         managerRef.current?.exportJSON();
+        //     }
+        // },
         { icon: settingsOutline, label: 'Settings', onClick: () => alert('Settings!') },
     ];
 
@@ -148,7 +154,8 @@ const MindMapper: React.FC<IMindMapper> = ({ project, updateProjectWithDebounce 
             }
             managerRef.current = new CanvasManager(canvasRef.current, jsonString,
                 onNodeDBClick,
-                aiControlClick
+                aiControlClick,
+                openSummarizer
             );
             if (!jsonString) managerRef.current?.addNode({ text: currentProject.name, description: (currentProject.description || '') });
             managerRef.current?.autoArrange();
@@ -229,7 +236,7 @@ const MindMapper: React.FC<IMindMapper> = ({ project, updateProjectWithDebounce 
         <>
             <button ref={popoverBtnRef} onClick={openPopover}></button>
             <IonMenu side="end" className='side-menu-content' contentId="main-content" >
-                <SummarizeNodeContainer canvasNodes={canvasNodes} summarizeNodeId={summarizeNodeId} />
+                <SummarizeNodeContainer updateNode={updateNode} canvasNodes={canvasNodes} summarizeNodeId={summarizeNodeId} />
             </IonMenu>
             <IonHeader>
                 <IonToolbar mode='ios' color={'light'}>
